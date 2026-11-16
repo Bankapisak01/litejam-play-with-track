@@ -127,7 +127,7 @@ button { font:inherit; color:inherit; background:none; border:0; padding:0; curs
 .tog { background:var(--panel2); border-radius:6px; padding:7px 10px; font-size:12px; color:rgba(255,255,255,.7); display:flex; align-items:center; gap:6px; white-space:nowrap; } .tog.on { background:var(--green); color:#000; }
 .lick { background:var(--panel); border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; gap:8px; border:1px solid transparent; } .lick.on { border-color:var(--green); }
 .lick .t { display:flex; align-items:center; gap:8px; font-size:14px; font-weight:700; } .lick .m { font-size:11.5px; color:rgba(255,255,255,.55); line-height:1.4; }
-.lick .acts { display:flex; gap:6px; } .lick .acts button { flex:1; height:32px; border-radius:6px; background:var(--panel2); font-size:12px; white-space:nowrap; } .lick .acts button.on { background:var(--green); color:#000; font-weight:700; }
+.lick .acts { display:flex; gap:6px; } .lick .acts .abtn { flex:1; min-width:0; height:36px; font-size:12px; padding:0 4px; }
 .mx { background:var(--panel); border-radius:8px; padding:8px 12px; display:flex; align-items:center; gap:10px; } .mx.off { opacity:.45; }
 .mx .n { width:92px; flex-shrink:0; font-size:13px; } .mx .n small { display:block; font-size:9.5px; color:rgba(255,255,255,.45); margin-top:1px; }
 .mx .b { width:26px; height:26px; border-radius:4px; background:var(--panel2); font-size:11px; font-weight:700; color:rgba(255,255,255,.7); flex-shrink:0; } .mx .b.m.on { background:var(--red); color:#000; } .mx .b.s.on { background:var(--green); color:#000; }
@@ -283,6 +283,33 @@ input[type=range]::-moz-range-thumb { width:16px; height:16px; border-radius:50%
 .member .mm { position:absolute; top:5px; left:5px; width:19px; height:19px; border-radius:4px; background:var(--red); color:#000; font-style:normal; font-size:9.5px; font-weight:700; display:flex; align-items:center; justify-content:center; pointer-events:none; } .member .ms .s.on { background:var(--green); color:#000; }
 .member input[type=range] { flex:none; width:100%; margin:5px 0 2px; } .member .v { font-size:10px; color:rgba(255,255,255,.55); } .member .src { font-size:8.5px; color:rgba(255,255,255,.35); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @media (prefers-reduced-motion: reduce) { .sp, .pstage .fx { animation:none; } .jfloat.pop { animation:none; } }
+/* ---------- Simple / Pro view · colour-coded action buttons: green = play, blue = listen, gold = score, red = record ---------- */
+.vsw { display:flex; align-items:center; gap:7px; font-size:11.5px; font-weight:700; color:rgba(255,255,255,.6); flex-shrink:0; margin-left:auto; }
+.vsw i { width:38px; height:22px; border-radius:11px; background:#3a3a3a; position:relative; transition:background .15s; }
+.vsw i::after { content:''; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#bbb; transition:transform .15s, background .15s; }
+.vsw.on { color:var(--green); } .vsw.on i { background:rgba(173,254,0,.3); } .vsw.on i::after { transform:translateX(16px); background:var(--green); }
+.abtn { height:40px; border-radius:10px; font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; padding:0 14px; border:1.5px solid transparent; flex-shrink:0; }
+.abtn.sm { height:34px; font-size:12px; }
+.abtn.go { background:var(--green); color:#000; } .abtn.stop { background:#3a3a3a; color:#fff; } .abtn.pro { background:#fff; color:#000; height:36px; }
+.abtn.listen { background:rgba(80,188,255,.12); color:var(--blue); border-color:rgba(80,188,255,.45); } .abtn.listen.on { background:var(--blue); color:#000; border-color:var(--blue); }
+.abtn.copy { background:linear-gradient(90deg,rgba(80,188,255,.16),rgba(173,254,0,.16)); color:#dff6ff; border-color:rgba(127,221,128,.5); } .abtn.copy.on { background:linear-gradient(90deg,#50BCFF,#ADFE00); color:#000; border-color:transparent; }
+.abtn.mine { background:rgba(173,254,0,.12); color:var(--green); border-color:rgba(173,254,0,.45); } .abtn.mine.on { background:var(--green); color:#000; border-color:var(--green); }
+.abtn.score { background:rgba(255,204,0,.12); color:var(--yellow); border-color:rgba(255,204,0,.5); } .abtn.score.on { background:var(--yellow); color:#000; }
+.abtn.rec { background:rgba(255,32,32,.14); color:#ff7b7b; border-color:rgba(255,90,90,.5); } .abtn.rec.on { background:var(--red); color:#fff; animation:pulse 1s infinite; }
+.lick.s { padding:10px; gap:10px; } .lick.s.on { background:#2a2e22; }
+.lrow { display:flex; align-items:center; gap:10px; }
+.lno { width:34px; height:34px; border-radius:50%; background:rgba(80,188,255,.16); color:var(--blue); font-weight:700; font-size:15px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.lno.all { background:rgba(255,204,0,.16); color:var(--yellow); } .lick.s.on .lno { background:var(--green); color:#000; }
+.li { flex:1; min-width:0; } .li .t { white-space:nowrap; } .li .m { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+.bestb { font-size:11.5px; font-weight:700; color:var(--yellow); white-space:nowrap; }
+.steps { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; } .steps .abtn { height:44px; padding:0 4px; font-size:12.5px; min-width:0; }
+.stepcap { font-size:11.5px; color:rgba(255,255,255,.6); line-height:1.4; } .stepcap b { color:#fff; }
+.lbmini { display:flex; align-items:center; gap:10px; width:100%; background:var(--panel); border-radius:10px; padding:8px 12px; text-align:left; font-size:12.5px; color:rgba(255,255,255,.75); }
+.lbmini .cv { border-radius:50%; } .lbmini .ri { flex:1; min-width:0; } .lbmini b { color:#fff; } .lbmini b.pts { color:var(--yellow); } .lbmini > span { color:var(--yellow); font-weight:700; font-size:12px; white-space:nowrap; }
+.promo { border:1px dashed #4a4a4a; border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; } .promo div { flex:1; min-width:0; font-size:13px; } .promo small { display:block; font-size:11px; color:rgba(255,255,255,.5); line-height:1.4; margin-top:3px; }
+.band.s .member { padding:8px 6px 10px; }
+.spd { display:flex; align-items:center; gap:10px; } .spd > span { font-size:12px; color:rgba(255,255,255,.6); } .spd > b { font-size:12px; color:var(--green); white-space:nowrap; }
+.spd .seg { flex:1; height:40px; } .spd .seg button { flex:1; padding:0 4px; font-weight:700; } .spd .seg button small { font-size:11px; font-weight:400; opacity:.65; margin-left:5px; }
 </style>
 </head>
 <body>
