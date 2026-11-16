@@ -578,7 +578,9 @@ function sheetLib() {
 }
 
 /* ================= profile · covers (icon / character / photo / avatar) · scored challenge · leaderboard ================= */
-const CHARS = [['bank-apisak','Bank Apisak','#ADFE00'],['rockmaster','Rockmaster','#FF2020'],['pitchy-rock','Pitchy Rock','#ff8ad0'],['sebastian','Sebastian','#c58bff'],['crystal-power','Crystal Power','#5eead4'],['g-force-killerfish','G-Force Killerfish','#50BCFF'],['deadbeat','Deadbeat','#FFCC00'],['piarna','Piarna','#f472b6']].map(c => ({ id:c[0], name:c[1], col:c[2] }));
+const CHARS = [['bank-apisak','Bank Apisak','#ADFE00'],['rockmaster','Rockmaster','#FF2020'],['pitchy-rock','Pitchy Rock','#ff8ad0'],['sebastian','Sebastian','#c58bff'],['crystal-power','Crystal Power','#5eead4'],['g-force-killerfish','G-Force Killerfish','#50BCFF'],['deadbeat','Deadbeat','#FFCC00'],['piarna','Piarna','#f472b6'],['punkman','Punkman','#ff3d9a','Alex Maybe']].map(c => ({ id:c[0], name:c[1], col:c[2], aka:c[3] }));
+const NO_SLASH = { punkman:true };            // pixel_v2 delivery has idle / walk / attack / power; the Ultimate pose falls back to power
+const REACT = { punkman:{ perfect:[100,300,110,110,80], good:[130,250,140,120], miss:[100,260,130,130], celebrate:[110,300,140,110,80] } };   // reactions_v3: one-shot sheets, frame durations in ms
 const CHARMAP = Object.fromEntries(CHARS.map(c => [c.id, c])), POSES = ['idle','walk','attack','power'];
 const LB_NAMES = ['RiffRanger','BluesCat','Nok_Guitar','SixStringSam','MintPick','TonePilot','FretFox','PentaQueen','LoopLizard','Khun_Solo','BendMaster','CapoKid','StrumBird','NeonNinja','VibratoVee','DropD_Dan','JamJelly','WahWahWin','Tapper_T','MuteMonk','PickPanda','SlideSiam','OctaveOwl','HammerOnHan','ChordChef','EchoEmi','FuzzFace_P','GrooveGoat','LickLord','TriadTiger'];
 function artHTML(a, px) {                    // one renderer for playlist covers, profile pictures and leaderboard avatars
@@ -591,7 +593,7 @@ function artHTML(a, px) {                    // one renderer for playlist covers
   const ic = PICONS[a.i || 0]; return box(ic[0], `background:linear-gradient(135deg,#2a2a2a,${ic[1]}55);display:flex;align-items:center;justify-content:center;font-size:${Math.round(px * .44)}px`);
 }
 const recentImgs = (k, act, cur) => (U.images || []).filter(im => im.k === k).map(im => `<button class="icn ${cur && cur.src === im.src ? 'on' : ''}" data-act="${act}" data-v="${im.id}">${artHTML({ t:im.k, src:im.src, i:cur && cur.i || 0 }, 36)}</button>`).join('');
-const charGrid = (act, cur) => `<div class="chgrid">${CHARS.map(ch => { const on = cur && cur.t === 'char' && cur.id === ch.id; return `<button class="chb ${on ? 'on' : ''}" data-act="${act}" data-t="char" data-v="${ch.id}">${artHTML({ t:'char', id:ch.id, act: on ? cur.act : 'idle' }, 60)}<small>${ch.name}</small></button>`; }).join('')}</div>`;
+const charGrid = (act, cur) => `<div class="chgrid">${CHARS.map(ch => { const on = cur && cur.t === 'char' && cur.id === ch.id; return `<button class="chb ${on ? 'on' : ''}" data-act="${act}" data-t="char" data-v="${ch.id}">${artHTML({ t:'char', id:ch.id, act: on ? cur.act : 'idle' }, 60)}<small>${ch.name}${ch.aka ? '<i>' + ch.aka + '</i>' : ''}</small></button>`; }).join('')}</div>`;
 const poseRow = (act, cur) => cur && cur.t === 'char' ? `<div class="chips">${POSES.map(p => `<button class="chip ${(cur.act || 'idle') === p ? 'on' : ''}" data-act="${act}" data-v="${p}">${p[0].toUpperCase() + p.slice(1)}</button>`).join('')}</div>` : '';
 function coverPicker(c) {
   const cv = c.cover, tab = c.ctab || 'icon'; let body = '';
@@ -919,13 +921,14 @@ function initLibrary() {
 const HOSTS = { Blues:'bank-apisak', Rock:'rockmaster', Pop:'pitchy-rock', Funk:'g-force-killerfish', 'Neo Soul':'piarna', Jazz:'piarna', Metal:'sebastian', Latin:'pitchy-rock', Ambient:'crystal-power', Country:'deadbeat', 'Thai Pop':'pitchy-rock', Reggae:'g-force-killerfish', Upload:'crystal-power' };
 const BAND_PREF = { drums:'deadbeat', bass:'g-force-killerfish', harmony:'pitchy-rock' };
 const STRN = ['high E', 'B', 'G', 'D', 'A', 'low E'];
-const ST = { cast:null, sig:'', lb:'', rb:'', bc:'', say:null, sayKey:'', bandSig:'', tipN:0, ghost:null };
+const ST = { cast:null, sig:'', lb:'', rb:'', bc:'', say:null, sayKey:'', bandSig:'', tipN:0, ghost:null, react:{} };
 const HIT = { seg:null, lick:-1, seq:[], owner:[], val:[], combo:0, best:0, power:0, pts:0, ult:0, lastNote:null, n:{ p:0, g:0, m:0 } };
 const shade = (hex, f) => '#' + [1, 3, 5].map(i => Math.max(0, Math.min(255, Math.round(parseInt(hex.slice(i, i + 2), 16) * f))).toString(16).padStart(2, '0')).join('');
 const trackCat = () => { const it = findItem(D.id); return (it && it.cat) || REAL_CAT[D.id] || 'Upload'; };
 function cast() {                                 // who stands where: the player's character, the style's coach, one band member per stem
   const av = U.profile.avatar, you = av && av.t === 'char' && CHARMAP[av.id] ? av.id : 'bank-apisak';
-  let coach = HOSTS[trackCat()] || CHARS[1 + hash(D.id) % (CHARS.length - 1)].id;
+  const pick = U.coach && U.coach[trackCat()];                                  // the player's own choice of coach for this style
+  let coach = (pick && CHARMAP[pick] && pick) || HOSTS[trackCat()] || CHARS[1 + hash(D.id) % (CHARS.length - 1)].id;
   if (coach === you) coach = you === 'rockmaster' ? 'sebastian' : 'rockmaster';
   const used = new Set([coach, you]), band = {};
   const take = (pref) => { const id = !used.has(pref) ? pref : CHARS.map(c => c.id).find(x => !used.has(x)); used.add(id); return id; };
@@ -935,14 +938,14 @@ function cast() {                                 // who stands where: the playe
 function updStage() {
   const el = $('now'); if (!el) return;
   const c = ST.cast = cast(), cat = CAT[trackCat()] || CAT.Upload, av = U.profile.avatar, pic = av && av.t !== 'char';
-  Object.assign(ST, { sig:'', lb:'~', rb:'~', bc:'', say:null, sayKey:'', bandSig:'' });
-  [c.coach, c.you].forEach(id => ['idle', 'attack', 'slash'].forEach(a => { const im = new Image(); im.src = `assets/chars/${id}_${a}.png`; }));
+  Object.values(ST.react).forEach(clearTimeout); Object.assign(ST, { sig:'', lb:'~', rb:'~', bc:'', say:null, sayKey:'', bandSig:'', react:{} });
+  [c.coach, c.you].forEach(id => ['idle', 'attack', NO_SLASH[id] ? 'power' : 'slash'].concat(Object.keys(REACT[id] || {}).map(r => 'r_' + r)).forEach(a => { const im = new Image(); im.src = `assets/chars/${id}_${a}.png`; }));
   el.className = 'pstage';
   el.innerHTML = `<div class="sky" style="background:radial-gradient(ellipse at 50% -10%,${shade(cat.b, .7)} 0,${cat.a} 42%,${shade(cat.a, .22)} 84%)"></div>
     <div class="beam"></div><div class="amps"><i></i><i></i></div><div class="floor" style="background:linear-gradient(180deg,${shade(cat.a, .5)},${shade(cat.a, .14)});border-top-color:${shade(cat.b, .45)}"></div>
     <div class="sbadge" id="stL"></div><div class="sbadge r d" id="stR"></div>
     <div class="fx" id="fxCoach"></div><div class="fx" id="fxYou"></div><div class="fx" id="fxBolt"></div>
-    <button class="who l" id="whoCoach" data-act="coachTip" aria-label="Coach ${esc(CHARMAP[c.coach].name)}: tap for a tip"><div class="sp" id="spCoach" style="background-image:url('assets/chars/${c.coach}_idle.png')"></div><div class="tag">Coach · <b>${esc(CHARMAP[c.coach].name)}</b></div></button>
+    <button class="who l" id="whoCoach" data-act="coachTip" aria-label="Coach ${esc(CHARMAP[c.coach].name)}: tap for a tip"><div class="sp" id="spCoach" style="background-image:url('assets/chars/${c.coach}_idle.png')"></div><div class="tag">Coach · <b>${esc(CHARMAP[c.coach].name)}</b><span class="swap" data-act="coachNext" role="button" aria-label="Change coach">⇄</span></div></button>
     <button class="who r" id="whoYou" data-act="avOpen" aria-label="You: change your character"><div class="sp flip" id="spYou" style="background-image:url('assets/chars/${c.you}_idle.png')"></div><div class="tag">${pic ? artHTML(av, 15) : ''}You · <b>${esc(U.profile.name)}</b></div></button>
     <div class="bubble" id="stBubble"></div><div class="jfloat" id="stJudge"></div><div class="cfloat" id="stCombo"></div>`;
   updHud(); LAST.bar = -1; LAST.beat = -1;
@@ -985,6 +988,14 @@ function hitUpTo(tick) {
     HIT.power = Math.max(0, Math.min(100, HIT.power + (j === 'p' ? 9 : (j === 'g' ? 3 : -8)))); HIT.lastNote = l.notes[i]; ch = true; }
   return ch;
 }
+function react(elId, ch, name) {                   // one-shot reaction sheet (4–5 frames with their own durations); the pose loop resumes afterwards
+  const fr = (REACT[ch] || {})[name], e = $(elId); if (!fr || !e || ST.react[elId]) return false;
+  const who = e.parentElement, N = fr.length; who.classList.add('react');
+  e.style.animation = 'none'; e.style.backgroundSize = N * 100 + '% 100%'; e.style.backgroundImage = `url('assets/chars/${ch}_r_${name}.png')`;
+  const step = (i) => { if (i >= N || !e.isConnected) { delete ST.react[elId]; e.style.animation = ''; e.style.backgroundSize = ''; e.style.backgroundPositionX = ''; who.classList.remove('react'); ST.sig = ''; return; }
+    e.style.backgroundPositionX = (i / (N - 1) * 100) + '%'; ST.react[elId] = setTimeout(() => step(i + 1), fr[i]); };
+  step(0); return true;
+}
 function hitFx() {
   const h = HIT.seq[HIT.seq.length - 1], n = HIT.lastNote, jf = $('stJudge'), cf = $('stCombo'); if (!h || !jf) return;
   const ult = HIT.power >= 100; if (ult) { HIT.power = 0; HIT.ult = performance.now() + 2 * 60000 / S.bpm; }
@@ -993,6 +1004,9 @@ function hitFx() {
   cf.innerHTML = HIT.combo >= 2 ? '<small>COMBO</small>×' + HIT.combo : '';
   if (ult) sayNow('ULTIMATE! ⚡', 1600); else if (h.j === 'm') sayNow('Keep going!', 1200); else if (h.j === 'p' && n[5]) sayNow('Nice bend! 🔥', 1400);
   else if (h.j === 'p' && n[7]) sayNow('Sweet vibrato!', 1400); else if (HIT.combo === 5) sayNow('5 in a row!', 1400); else if (HIT.combo === 10) sayNow('On fire! 🔥', 1400);
+  const c = ST.cast; if (!c) return;                                               // characters that ship reaction sheets act them out
+  if (ult) { react('spYou', c.you, 'celebrate'); react('spCoach', c.coach, 'celebrate'); }
+  else if (h.j === 'm') react('spCoach', c.coach, 'miss'); else if (h.j === 'p' && (n[5] || n[7] || HIT.combo % 4 === 0)) react('spCoach', c.coach, 'perfect'); else if (h.j === 'g' && HIT.combo % 3 === 0) react('spCoach', c.coach, 'good');
 }
 const hudOn = () => !D.own && S.loopKind === 'lick' && !!D.licks.length && (S.lickMode !== 'listen' || S.challenge != null);
 function updHud() {
@@ -1020,7 +1034,7 @@ function hudTick(fx) {
   if (fx) hitFx();
 }
 /* ---- every frame: spotlight, poses, badges, bubble, band ---- */
-const setSp = (id, ch, act, dur) => { const e = $(id); if (!e) return; e.style.backgroundImage = `url('assets/chars/${ch}_${act}.png')`; e.style.animationDuration = dur; };
+const setSp = (id, ch, act, dur) => { const e = $(id); if (!e || ST.react[id]) return; e.style.backgroundImage = `url('assets/chars/${ch}_${act}.png')`; e.style.animationDuration = dur; };
 function stageTick(tick, cnt, bar) {
   const el = $('now'), c = ST.cast; if (!el || !c || !$('spCoach')) return;
   const now = performance.now(), lickOn = S.loopKind === 'lick' && !!D.licks.length, seg = AU.playing && AU.segs.length ? (cnt ? cnt.seg : curSeg()) : null;
@@ -1033,7 +1047,7 @@ function stageTick(tick, cnt, bar) {
     else who = 'you';
   }
   const play = !!seg && !cnt && AU.ctx.currentTime >= seg.t0, ult = who === 'you' && HIT.ult > now;
-  const aC = who === 'coach' && play ? 'attack' : 'idle', aY = who === 'you' && play ? (ult ? 'slash' : 'attack') : 'idle', aura = who === 'you' && play && lickOn && !S.jam && (HIT.combo >= 4 || ult);
+  const aC = who === 'coach' && play ? 'attack' : 'idle', aY = who === 'you' && play ? (ult ? (NO_SLASH[c.you] ? 'power' : 'slash') : 'attack') : 'idle', aura = who === 'you' && play && lickOn && !S.jam && (HIT.combo >= 4 || ult);
   const sig = [lickOn, who, aC, aY, aura, ult, S.bpm].join('|');
   if (sig !== ST.sig) { ST.sig = sig; const cyc = (120 / S.bpm).toFixed(3) + 's';              // one strum cycle = 2 beats
     el.className = 'pstage' + (lickOn ? ' lick' : '') + (who ? ' on-' + who : '') + (ST.say ? ' say' : '');
@@ -1383,6 +1397,8 @@ const ACT = {
   sKey: (d) => { S.sKey = +d.v; renderScaleTab(); }, sType: (d) => { S.sType = d.v; renderScaleTab(); },
   demo: (d) => demo(d.v),
   coachTip: () => coachTip(),
+  coachNext: () => { const cat = trackCat(), ids = CHARS.map(x => x.id).filter(id => id !== ST.cast.you), nx = ids[(ids.indexOf(ST.cast.coach) + 1) % ids.length];
+    U.coach = U.coach || {}; U.coach[cat] = nx; saveU(); updStage(); updMixer(); frame(true); toast(CHARMAP[nx].name + ' now coaches your ' + cat + ' tracks.'); },
   lickCount: () => { S.lickCount = !S.lickCount; updLicks(); toast(S.lickCount ? 'Half-bar count-in on: 2 beats before every lick pass.' : 'Count-in off: lick passes loop back to back.'); },
   pickTrack: (d) => { if (D.id !== d.v) setTrack(d.v); renderNotes(); if (S.tab === 'track' && S.screen === 'player') openPlayer(); else renderView(); },
 };
@@ -1428,7 +1444,7 @@ FEATURES.push(['F14', 'All licks + Jam & Record — เฉพาะ Audio mode',
 FEATURES.push(['F15', 'เชื่อมกีตาร์จริงผ่าน BLE — ไฟ LED ตามหน้าจอ', 'ปุ่ม Connect ที่แถบบนสุดเชื่อมกีตาร์ Litejam ผ่าน Web Bluetooth เมื่อเชื่อมแล้วไฟบนเฟรตบอร์ดจริงจะตามหน้าจอทุกโหมด: สเกล (root แดง, โน้ตสเกลน้ำเงิน, Target notes ขาว), Chord tones, และ Lick ที่ไฟเขียวคือโน้ตที่ต้องเล่นตอนนี้ ไฟเหลืองคือโน้ตถัดไป รวมถึงแท็บ Scale เดิม มีหน้าสถานะแสดงชื่อกีตาร์ แบตเตอรี่ จำนวนเฟรมที่ส่ง ปุ่มทดสอบไฟ และปุ่มปิดไฟ',
   ['โปรโตคอลเดียวกับแอป: service 00EE › characteristic EE04'], [['ต้องทดสอบกับกีตาร์จริง', 'new', 'เขียนตามรูปแบบเฟรมของแอป Litejam และทดสอบกับอุปกรณ์จำลองแล้ว แต่ยังไม่ได้ลองกับกีตาร์จริง · ใช้ได้ใน Chrome หรือ Edge บนคอมพิวเตอร์และ Android ผ่าน https หรือ localhost · iPhone และ iPad เชื่อมไม่ได้ · ต้องปิดแอป Litejam บนมือถือก่อน']]]);
 FEATURES.push(['F16', 'เวที + วงเป็นตัวละคร Litejam Universe', 'ส่วนบนของ player เป็นเวที สีฉากตาม Style ของแทร็ก โค้ชประจำ Style ยืนซ้าย ตัวละครของผู้ใช้ยืนขวา (ใช้ตัวละครจากโปรไฟล์ แตะเพื่อเปลี่ยน) คอร์ด NOW / NEXT และจุดจังหวะยังอยู่แถวเดิมเหนือเวที ตัวใหญ่ชัดเหมือนก่อน ตอนเล่นแสงไฟส่องคนที่กำลังเล่นและตัวละครดีดตามจังหวะ 2 บีตต่อรอบ แตะโค้ชเพื่อขอคำแนะนำ เช่น โน้ตเป้าหมายของคอร์ดตอนนั้น Mixer เปลี่ยนเป็น “The band”: stem ละ 1 ตัวละคร แตะเพื่อ mute กดค้างเพื่อ solo (มีปุ่ม S ให้ด้วย) ตัวละครขยับเฉพาะตอนที่ stem นั้นมีเสียง',
-  ['Litejam Universe Pixel V2 › idle / attack / slash atlas', '01_AUDIO › stems', 'Metadata MASTER › style'], [['ใช้ได้แล้ว', 'ok', 'ใช้ sprite จริง 8 ตัวละคร · โค้ชต่อ Style และตัวละครประจำ stem เป็นข้อเสนอ ยังแก้ได้'], ['ต้องการ source เพิ่ม', 'v2', 'ทุกตัวละครตอนนี้ถือกีตาร์ ถ้าต้องการมือกลอง / เบส / คีย์บอร์ดที่ตรงเครื่อง ต้องมี sprite ท่าใหม่']]]);
+  ['Litejam Universe Pixel V2 › idle / attack / slash atlas', '01_AUDIO › stems', 'Metadata MASTER › style'], [['ใช้ได้แล้ว', 'ok', 'ใช้ sprite จริง 9 ตัวละคร · โค้ชต่อ Style และตัวละครประจำ stem เป็นข้อเสนอ ยังแก้ได้ แตะ ⇄ ที่ป้ายโค้ชเพื่อเปลี่ยนโค้ชของ Style นั้นเอง'], ['Punkman (Alex Maybe)', 'ok', 'ตัวละครตัวที่ 9 จาก punkman › pixel_v2 (idle, walk, attack, power) เลือกเป็นตัวละครของผู้ใช้ ปกเพลย์ลิสต์ หรือโค้ชได้ และเป็นตัวแรกที่มีท่า reaction จาก reactions_v3: เป็นโค้ชจะชูกำปั้นเมื่อ PERFECT ยิ้มเมื่อ GOOD ทำหน้าเสียดายเมื่อ MISS และ celebrate ตอน Ultimate · ยังไม่มี atlas ท่า slash จึงใช้ท่า power แทนตอน Ultimate'], ['ต้องการ source เพิ่ม', 'v2', 'ทุกตัวละครตอนนี้ถือกีตาร์ ถ้าต้องการมือกลอง / เบส / คีย์บอร์ดที่ตรงเครื่อง ต้องมี sprite ท่าใหม่']]]);
 FEATURES.push(['F17', 'Call & response กับโค้ช', 'ตอนฝึก lick เวทีสูงขึ้นและแสดงว่าใครเล่นอยู่: รอบ LISTEN ไฟส่องโค้ช โค้ชเล่นพร้อมบอลลูนคำแนะนำ 1 ประโยคต่อรอบ รอบ YOUR TURN ไฟย้ายมาที่ตัวละครของผู้ใช้ ป้ายซ้ายบนบอกรอบและนับ 3–4 ตอน count-in ป้ายขวาบนบอกบาร์ คำแนะนำสร้างจากโน้ตของ lick นั้นจริง ๆ เช่น โน้ตแรกอยู่เฟรตไหนสายไหน โน้ตที่ต้อง bend ขึ้นเท่าไร โน้ตที่ใส่ vibrato และโน้ตจบเป็นโน้ตอะไรของคอร์ด',
   ['05_TABS › .gp (string, fret, bend, vibrato)', '04_GUIDE_LICKS › Perf.wav', 'Chord_Progression'], [['LJ001 + LJ002', 'ok', 'ใช้ได้กับทุก lick และ All licks ทั้ง Listen, Call & response และ My turn']]]);
 FEATURES.push(['F18', 'YOUR TURN — ผลตอบรับรายโน้ต', 'ตอนผู้ใช้เล่น (Call & response, My turn, Scored run) แต่ละโน้ตขึ้น PERFECT / GOOD / MISS พร้อมแต้ม มี COMBO แถบจุดรายโน้ตใต้เวที และ Power meter ที่เต็มแล้วตัวละครทำท่า Ultimate โค้ชชมเมื่อ bend หรือ vibrato ตรง ใน Scored run มี “Ghost” คือผู้เล่นอันดับถัดไปบน leaderboard ให้ไล่ตาม และคะแนนสรุปท้ายรอบคิดจากผลรายโน้ตชุดเดียวกับที่เห็นบนเวที',
