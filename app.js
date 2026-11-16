@@ -766,15 +766,19 @@ function updBoard() {
       ${me ? '' : `<div class="lbr me">${artHTML({ t:'avatar' }, 34)}<div class="ri"><div class="tt">${esc(U.profile.name)} <em>you</em></div><div class="mm">No score yet — tap 🏆 Scored run on a lick to enter</div></div></div>`}</div>`;
 }
 function finishChallenge() {
-  const i = S.challenge, tid = D.id; S.challenge = null; stop(); AU.pausedTick = S.loop ? S.loop.a : 0;
-  const before = myRank(tid, 'week'), one = () => { const acc = 72 + Math.floor(Math.random() * 27), timing = 12 + Math.floor(Math.random() * 46); return { acc, timing, score:Math.round((acc * 9.2 + (60 - timing) * 1.3) / 5) * 5 }; };   // stand-in for note detection
+  const i = S.challenge, tid = D.id, sg = AU.segs[AU.segs.length - 1];
+  if (HIT.lick !== i || HIT.seg !== sg) hitReset(sg, i); hitUpTo(Infinity);                    // judge the notes the frame loop has not reached yet
+  const one = (k) => { const hs = HIT.seq.filter((h, x) => HIT.owner[x] === k), ok = hs.filter(h => h.j !== 'm');          // stand-in for note detection: the same judgements the stage showed
+    return { acc:Math.round(ok.length / hs.length * 100), timing: ok.length ? Math.round(ok.reduce((a, h) => a + Math.abs(h.ms), 0) / ok.length) : 0, score:Math.min(1000, Math.round(hs.reduce((a, h) => a + h.pts, 0) / 5) * 5) }; };
+  S.challenge = null; stop(); AU.pausedTick = S.loop ? S.loop.a : 0;
+  const before = myRank(tid, 'week');
   U.scores = U.scores || {}; const s = U.scores[tid] = U.scores[tid] || { licks:{}, total:0 }; let ctx;
-  if (i === D.licks.length) { const parts = D.licks.map(one), sum = parts.reduce((a, p) => a + p.score, 0), prev = s.allBest || 0;      // full solo: every lick is scored in the same take
+  if (i === D.licks.length) { const parts = D.licks.map((x, k) => one(k)), sum = parts.reduce((a, p) => a + p.score, 0), prev = s.allBest || 0;      // full solo: every lick is scored in the same take
     parts.forEach((p, k) => { if (p.score > (s.licks[k] || 0)) s.licks[k] = p.score; }); if (sum > prev) s.allBest = sum;
     ctx = { lick:i, parts, score:sum, max:parts.length * 1000, acc:Math.round(parts.reduce((a, p) => a + p.acc, 0) / parts.length), timing:Math.round(parts.reduce((a, p) => a + p.timing, 0) / parts.length), best:sum > prev, prev };
-  } else { const p = one(), prev = s.licks[i] || 0; if (p.score > prev) s.licks[i] = p.score; ctx = { lick:i, score:p.score, max:1000, acc:p.acc, timing:p.timing, best:p.score > prev, prev }; }
-  s.total = Object.values(s.licks).reduce((a, b) => a + b, 0); saveU(); updLicks(); updBoard();
-  S.ctx = Object.assign(ctx, { total:s.total, before, after:myRank(tid, 'week') }); openSheet('result');
+  } else { const p = one(i), prev = s.licks[i] || 0; if (p.score > prev) s.licks[i] = p.score; ctx = { lick:i, score:p.score, max:1000, acc:p.acc, timing:p.timing, best:p.score > prev, prev }; }
+  s.total = Object.values(s.licks).reduce((a, b) => a + b, 0); saveU(); updLicks(); updBoard(); hudTick(false);
+  S.ctx = Object.assign(ctx, { total:s.total, before, after:myRank(tid, 'week'), combo:HIT.best }); openSheet('result');
 }
 function sheetSocial() {
   const c = S.ctx || {}; let h = '';
@@ -820,7 +824,7 @@ function initSocial() {
     avSet: (d) => { U.profile.avatar = { t:'char', id:d.v, act:'idle' }; saveU(); renderSheet(); },
     avPose: (d) => { U.profile.avatar.act = d.v; saveU(); renderSheet(); },
     avImg: (d) => { const im = U.images.find(x => x.id === d.v); if (im) { U.profile.avatar = { t:'img', src:im.src }; saveU(); renderSheet(); } },
-    avDone: () => { const ret = S.ctx && S.ctx.ret; if (ret) { S.ctx = ret; S.sheet = 'plName'; renderSheet(); plHint(); } else { closeSheet(); if (S.screen === 'library') renderLibrary(); else updBoard(); } },
+    avDone: () => { const ret = S.ctx && S.ctx.ret; if (ret) { S.ctx = ret; S.sheet = 'plName'; renderSheet(); plHint(); } else { closeSheet(); if (S.screen === 'library') renderLibrary(); else { updBoard(); updStage(); updMixer(); frame(true); } } },
     boardOpen: () => { S.ctx = { scope:'week' }; openSheet('board'); },
     boardScope: (d) => { S.ctx.scope = d.v; renderSheet(); },
     challenge: (d) => { closeSheet(); if (S.mode !== 'audio') setMode('audio'); S.challenge = +d.v; startLick(+d.v, 'mine'); toast('Scored run: play ' + lkName(+d.v).toLowerCase().replace('lick', 'Lick').replace('all Licks', 'all licks') + ' once after the count-in.'); },
@@ -907,6 +911,153 @@ function initLibrary() {
   initSocial(); initBle();
 }
 
+/* ================= stage · coach · band characters · hit feedback =================
+   Litejam Universe characters in the player: a stage with the style's coach and the player's own character, the mixer as a band,
+   Call & response with a coach speech bubble, and per-note feedback on the player's turn (simulated — there is no note detection yet). */
+const HOSTS = { Blues:'bank-apisak', Rock:'rockmaster', Pop:'pitchy-rock', Funk:'g-force-killerfish', 'Neo Soul':'piarna', Jazz:'piarna', Metal:'sebastian', Latin:'pitchy-rock', Ambient:'crystal-power', Country:'deadbeat', 'Thai Pop':'pitchy-rock', Reggae:'g-force-killerfish', Upload:'crystal-power' };
+const BAND_PREF = { drums:'deadbeat', bass:'g-force-killerfish', harmony:'pitchy-rock' };
+const STRN = ['high E', 'B', 'G', 'D', 'A', 'low E'];
+const ST = { cast:null, sig:'', lb:'', rb:'', bc:'', say:null, sayKey:'', bandSig:'', tipN:0, ghost:null };
+const HIT = { seg:null, lick:-1, seq:[], owner:[], val:[], combo:0, best:0, power:0, pts:0, ult:0, lastNote:null, n:{ p:0, g:0, m:0 } };
+const shade = (hex, f) => '#' + [1, 3, 5].map(i => Math.max(0, Math.min(255, Math.round(parseInt(hex.slice(i, i + 2), 16) * f))).toString(16).padStart(2, '0')).join('');
+const trackCat = () => { const it = findItem(D.id); return (it && it.cat) || REAL_CAT[D.id] || 'Upload'; };
+function cast() {                                 // who stands where: the player's character, the style's coach, one band member per stem
+  const av = U.profile.avatar, you = av && av.t === 'char' && CHARMAP[av.id] ? av.id : 'bank-apisak';
+  let coach = HOSTS[trackCat()] || CHARS[1 + hash(D.id) % (CHARS.length - 1)].id;
+  if (coach === you) coach = you === 'rockmaster' ? 'sebastian' : 'rockmaster';
+  const used = new Set([coach, you]), band = {};
+  const take = (pref) => { const id = !used.has(pref) ? pref : CHARS.map(c => c.id).find(x => !used.has(x)); used.add(id); return id; };
+  CH.forEach(([k, name]) => { band[k] = k === 'guide' ? coach : take(k === 'harmony' && /organ|key|piano|synth|pad/i.test(name) ? 'piarna' : (BAND_PREF[k] || 'pitchy-rock')); });
+  return { you, coach, band };
+}
+function updStage() {
+  const el = $('now'); if (!el) return;
+  const c = ST.cast = cast(), cat = CAT[trackCat()] || CAT.Upload, av = U.profile.avatar, pic = av && av.t !== 'char';
+  Object.assign(ST, { sig:'', lb:'~', rb:'~', bc:'', say:null, sayKey:'', bandSig:'' });
+  [c.coach, c.you].forEach(id => ['idle', 'attack', 'slash'].forEach(a => { const im = new Image(); im.src = `assets/chars/${id}_${a}.png`; }));
+  el.className = 'pstage';
+  el.innerHTML = `<div class="sky" style="background:radial-gradient(ellipse at 50% -10%,${shade(cat.b, .7)} 0,${cat.a} 42%,${shade(cat.a, .22)} 84%)"></div>
+    <div class="beam"></div><div class="amps"><i></i><i></i></div><div class="floor" style="background:linear-gradient(180deg,${shade(cat.a, .5)},${shade(cat.a, .14)});border-top-color:${shade(cat.b, .45)}"></div>
+    <div class="sbadge" id="stL"></div><div class="sbadge r d" id="stR"></div>
+    <div class="fx" id="fxCoach"></div><div class="fx" id="fxYou"></div><div class="fx" id="fxBolt"></div>
+    <button class="who l" id="whoCoach" data-act="coachTip" aria-label="Coach ${esc(CHARMAP[c.coach].name)}: tap for a tip"><div class="sp" id="spCoach" style="background-image:url('assets/chars/${c.coach}_idle.png')"></div><div class="tag">Coach · <b>${esc(CHARMAP[c.coach].name)}</b></div></button>
+    <button class="who r" id="whoYou" data-act="avOpen" aria-label="You: change your character"><div class="sp flip" id="spYou" style="background-image:url('assets/chars/${c.you}_idle.png')"></div><div class="tag">${pic ? artHTML(av, 15) : ''}You · <b>${esc(U.profile.name)}</b></div></button>
+    <div class="bubble" id="stBubble"></div><div class="jfloat" id="stJudge"></div><div class="cfloat" id="stCombo"></div>`;
+  updHud(); LAST.bar = -1; LAST.beat = -1;
+}
+/* ---- coach lines: built from the lick's own notes (first note, bends, vibrato, landing note) ---- */
+const noteNm = (n) => NOTE[mod(n[4] + S.tr, 12)];
+function coachTips(l) {
+  const ns = l.notes.filter(n => !n[6]); if (!ns.length) return Object.assign(['Listen first, then copy me.'], { your:'Your turn!' });
+  const f = ns[0], last = ns[ns.length - 1], pos = (n) => 'fret ' + lickFret(n[3], l) + ', ' + STRN[n[2] - 1] + ' string', tips = [];
+  tips.push('Listen first. I start on ' + noteNm(f) + ' — ' + pos(f) + '.');
+  const b = ns.find(n => n[5]); if (b) tips.push('Bend the ' + noteNm(b) + ' up ' + (b[5] >= 2 ? 'a whole step' : 'a half step') + ' — ' + pos(b) + '.');
+  const v = ns.find(n => n[7]); if (v) tips.push('Let the long ' + noteNm(v) + ' sing — add vibrato.');
+  const c = chordAt(Math.min(D.bars - 1, Math.floor(last[0] / TPB))), iv = mod(last[4] + S.tr - c.pc, 12), role = { 0:'the root', 3:'the minor 3rd', 4:'the 3rd', 7:'the 5th', 10:'the b7' }[iv];
+  tips.push('Land on ' + noteNm(last) + (role && c.iv.includes(iv) ? ' — ' + role + ' of ' + c.label + '.' : ' to finish the phrase.'));
+  tips.your = 'Your turn! Start on ' + pos(f) + '.';
+  return tips;
+}
+function sayNow(text, ms) { ST.say = { text, until: ms ? performance.now() + ms : 0 }; const b = $('stBubble'); if (b) b.textContent = text; }
+function coachTip() {                             // tapping the coach
+  if (S.loopKind === 'lick' && D.licks.length) { const t = coachTips(lk(S.lick)); return sayNow(t[ST.tipN++ % t.length], 4500); }
+  const c = chordAt(Math.min(D.bars - 1, Math.floor(getTick() / TPB))), box = boxRange(), sc = scaleNow(Math.floor(getTick() / TPB));
+  const lines = ['Over ' + c.label + ', aim for ' + c.iv.slice(0, 3).map(i => NOTE[(c.pc + i) % 12]).join(', ') + '.', 'Start in box 1 — frets ' + box[0] + '–' + box[1] + ' of ' + sc.name + '.'];
+  if (D.licks.length) lines.push('Want a lick? Tap ⇄ Call & response on Lick 1 and copy me.');
+  sayNow(lines[ST.tipN++ % lines.length], 4500);
+}
+/* ---- per-note feedback on the player's turn (stand-in for note detection) ---- */
+function hitReset(seg, i) {
+  const l = lk(i), cnt = {};
+  Object.assign(HIT, { seg, lick:i, seq:[], combo:0, best:0, power:0, pts:0, ult:0, lastNote:null, n:{ p:0, g:0, m:0 } });
+  HIT.owner = l.all ? [].concat(...D.licks.map((x, k) => x.notes.map(() => k))) : l.notes.map(() => i);
+  HIT.owner.forEach(k => { cnt[k] = (cnt[k] || 0) + 1; }); HIT.val = HIT.owner.map(k => 1000 / cnt[k]);          // every lick is worth 1,000
+  hudTick(false);
+}
+function hitUpTo(tick) {
+  const l = lk(HIT.lick); let ch = false;
+  while (HIT.seq.length < l.notes.length && l.notes[HIT.seq.length][0] + 50 <= tick) {
+    const i = HIT.seq.length, r = Math.random(), j = r < .66 ? 'p' : (r < .91 ? 'g' : 'm');
+    const ms = j === 'm' ? 0 : Math.round((j === 'p' ? Math.random() * 24 : 25 + Math.random() * 35) * (Math.random() < .5 ? -1 : 1)), pts = HIT.val[i] * (j === 'p' ? 1 : (j === 'g' ? .6 : 0));
+    HIT.seq.push({ j, ms, pts }); HIT.n[j]++; HIT.pts += pts; HIT.combo = j === 'm' ? 0 : HIT.combo + 1; HIT.best = Math.max(HIT.best, HIT.combo);
+    HIT.power = Math.max(0, Math.min(100, HIT.power + (j === 'p' ? 9 : (j === 'g' ? 3 : -8)))); HIT.lastNote = l.notes[i]; ch = true; }
+  return ch;
+}
+function hitFx() {
+  const h = HIT.seq[HIT.seq.length - 1], n = HIT.lastNote, jf = $('stJudge'), cf = $('stCombo'); if (!h || !jf) return;
+  const ult = HIT.power >= 100; if (ult) { HIT.power = 0; HIT.ult = performance.now() + 2 * 60000 / S.bpm; }
+  jf.innerHTML = `<b class="${ult ? 'u' : h.j}">${ult ? 'ULTIMATE!' : { p:'PERFECT!', g:'GOOD', m:'MISS' }[h.j]}</b>${h.j === 'm' ? '' : '<i>+' + Math.round(h.pts) + '</i>'}`;
+  jf.classList.remove('pop'); void jf.offsetWidth; jf.classList.add('pop');
+  cf.innerHTML = HIT.combo >= 2 ? '<small>COMBO</small>×' + HIT.combo : '';
+  if (ult) sayNow('ULTIMATE! ⚡', 1600); else if (h.j === 'm') sayNow('Keep going!', 1200); else if (h.j === 'p' && n[5]) sayNow('Nice bend! 🔥', 1400);
+  else if (h.j === 'p' && n[7]) sayNow('Sweet vibrato!', 1400); else if (HIT.combo === 5) sayNow('5 in a row!', 1400); else if (HIT.combo === 10) sayNow('On fire! 🔥', 1400);
+}
+const hudOn = () => !D.own && S.loopKind === 'lick' && !!D.licks.length && (S.lickMode !== 'listen' || S.challenge != null);
+function updHud() {
+  const el = $('hud'); if (!el) return;
+  if (!hudOn()) { el.innerHTML = ''; el.style.display = 'none'; ST.ghost = null; return; }
+  if (HIT.lick !== S.lick) hitReset(null, S.lick);
+  let vs = ''; ST.ghost = null;
+  if (S.challenge != null) { const rows = boardFor(D.id, 'week'), me = rows.find(x => x.me), g = me ? (me.rank > 1 ? rows[me.rank - 2] : rows[1]) : rows[rows.length - 1], all = S.challenge === D.licks.length;
+    const sc = U.scores && U.scores[D.id], tot = sc ? sc.total : 0, runMax = all ? D.licks.length * 1000 : 1000, need = g.score - (tot - (!sc ? 0 : (all ? tot : (sc.licks[S.challenge] || 0)))) + 5;   // points this run needs to pass the ghost on the track total
+    ST.ghost = { name:g.name, rank:g.rank, target:Math.max(5, Math.min(need, runMax)), note: me && me.rank === 1 ? 'stay ahead of #2' : (need <= runMax ? 'pass #' + g.rank : 'chasing #' + g.rank) };
+    vs = `<div class="vs"><div class="vsc me">${artHTML({ t:'avatar' }, 30)}<div><b>${esc(U.profile.name)}</b><small id="hudMe"></small></div></div><div class="vsc">${artHTML(g.av, 30)}<div><b>Ghost · ${esc(g.name)}</b><small id="hudGh"></small></div></div></div>`; }
+  el.style.display = '';
+  el.innerHTML = `<div class="hudtop"><span id="hudCnt"></span><span id="hudN"></span></div><div class="judge" id="hudPips"></div>
+    <div class="pm"><span>⚡ Power</span><div class="pmb"><i id="hudPw"></i></div><b id="hudPts"></b></div>${vs}
+    <div class="hudnote">Demo feedback — simulated in this prototype. In the app the guitar listens to every note. A full Power meter triggers the Ultimate pose.</div>`;
+  hudTick(false);
+}
+function hudTick(fx) {
+  const pp = $('hudPips'); if (!pp || HIT.lick < 0) return;
+  const N = HIT.owner.length, k = HIT.seq.length, live = AU.playing && HIT.seg && k < N;
+  $('hudCnt').innerHTML = `Notes · <b class="p">${HIT.n.p} perfect</b> · <b class="g">${HIT.n.g} good</b> · <b class="m">${HIT.n.m} miss</b>`; $('hudN').textContent = k + ' / ' + N;
+  pp.className = 'judge' + (N > 40 ? ' many' : ''); pp.innerHTML = HIT.owner.map((o, i) => `<i class="${i < k ? HIT.seq[i].j : (i === k && live ? 'c' : '')}"></i>`).join('');
+  $('hudPw').style.width = HIT.power + '%'; $('hudPts').textContent = Math.round(HIT.pts).toLocaleString() + ' pts';
+  const g = ST.ghost; if (g && $('hudGh')) { $('hudMe').textContent = Math.round(HIT.pts).toLocaleString() + ' pts · this run'; $('hudGh').textContent = Math.round(g.target * k / N).toLocaleString() + ' / ' + g.target.toLocaleString() + ' · ' + g.note; }
+  if (fx) hitFx();
+}
+/* ---- every frame: spotlight, poses, badges, bubble, band ---- */
+const setSp = (id, ch, act, dur) => { const e = $(id); if (!e) return; e.style.backgroundImage = `url('assets/chars/${ch}_${act}.png')`; e.style.animationDuration = dur; };
+function stageTick(tick, cnt, bar) {
+  const el = $('now'), c = ST.cast; if (!el || !c || !$('spCoach')) return;
+  const now = performance.now(), lickOn = S.loopKind === 'lick' && !!D.licks.length, seg = AU.playing && AU.segs.length ? (cnt ? cnt.seg : curSeg()) : null;
+  let who = '', badge = '', bcls = '';
+  if (seg) {
+    if (S.jam) { who = 'you'; const rec = S.jam.state === 'rec'; badge = rec ? '● REC ' + fmt(tick / tps()) : '▶ YOUR TAKE'; bcls = rec ? 'rec' : 'l'; }
+    else if (lickOn) { const sc = S.challenge != null, mine = sc || S.lickMode === 'mine' || (S.lickMode === 'call' && !seg.guideOn);
+      who = mine ? 'you' : 'coach'; bcls = cnt ? 'c' : (sc ? 's' : (mine ? 'y' : 'l'));
+      badge = (sc ? '🏆 SCORED RUN' : (mine ? '🎸 YOUR TURN' : '👂 LISTEN')) + (S.lickMode === 'call' && !sc ? ' · round ' + ((seg.pass >> 1) + 1) : '') + (cnt ? ' · ' + (cnt.k ? 4 : 3) : ''); }
+    else who = 'you';
+  }
+  const play = !!seg && !cnt && AU.ctx.currentTime >= seg.t0, ult = who === 'you' && HIT.ult > now;
+  const aC = who === 'coach' && play ? 'attack' : 'idle', aY = who === 'you' && play ? (ult ? 'slash' : 'attack') : 'idle', aura = who === 'you' && play && lickOn && !S.jam && (HIT.combo >= 4 || ult);
+  const sig = [lickOn, who, aC, aY, aura, ult, S.bpm].join('|');
+  if (sig !== ST.sig) { ST.sig = sig; const cyc = (120 / S.bpm).toFixed(3) + 's';              // one strum cycle = 2 beats
+    el.className = 'pstage' + (lickOn ? ' lick' : '') + (who ? ' on-' + who : '') + (ST.say ? ' say' : '');
+    setSp('spCoach', c.coach, aC, aC === 'idle' ? '1.1s' : cyc); setSp('spYou', c.you, aY, aY === 'idle' ? '1.1s' : cyc);
+    $('fxCoach').className = 'fx' + (who === 'coach' && play && lickOn ? ' show' : ''); $('fxYou').className = 'fx' + (aura ? ' show' : ''); $('fxBolt').className = 'fx' + (ult ? ' show' : '');
+    if (who !== 'you' || !lickOn) { $('stJudge').innerHTML = ''; $('stCombo').innerHTML = ''; } }
+  const lb = badge + '|' + bcls; if (lb !== ST.lb) { ST.lb = lb; const e = $('stL'); e.textContent = badge; e.className = 'sbadge ' + bcls + (badge ? ' show' : ''); }
+  let rb = ''; if (lickOn) { const l = lk(S.lick), nb = l.endBar - l.startBar + 1; rb = 'Bar ' + Math.max(1, Math.min(nb, bar + 2 - l.startBar)) + ' / ' + nb; } else if (BLE.state === 'on') rb = '● LED sync';
+  if (rb !== ST.rb) { ST.rb = rb; const e = $('stR'); e.textContent = rb; e.className = 'sbadge r d' + (rb ? ' show' : '') + (lickOn ? '' : ' led'); }
+  // coach bubble: one line per pass, taken from the lick itself
+  if (lickOn && seg && !S.jam) { const key = seg.pass + ':' + who + ':' + S.lick + ':' + S.lickMode + ':' + S.challenge;
+    if (key !== ST.sayKey) { ST.sayKey = key; const tips = coachTips(lk(S.lick));
+      if (who === 'coach') sayNow(tips[(S.lickMode === 'call' ? seg.pass >> 1 : seg.pass) % tips.length]); else sayNow(S.challenge != null ? 'One take. Make it count!' : tips.your, 2 * TPB / tps() * 1000); } }
+  else if (ST.sayKey) { ST.sayKey = ''; ST.say = null; }
+  if (ST.say && ST.say.until && now > ST.say.until) ST.say = null;
+  const bc = ST.say ? 'bubble show ' + (lickOn && who === 'coach' ? 'hi' : 'lo') : 'bubble'; if (bc !== ST.bc) { ST.bc = bc; $('stBubble').className = bc; el.classList.toggle('say', !!ST.say); }
+  // the player's turn: judge each note as its time passes
+  if (lickOn && who === 'you' && seg && !S.jam && hudOn()) { if (HIT.seg !== seg) hitReset(seg, S.lick); if (!cnt && hitUpTo(tick)) hudTick(true); }
+  // the band: a member strums while its stem is audible
+  const anySolo = CHKEYS.some(k => S.ch[k].solo), on = {}; let bs = S.bpm + '';
+  CH.forEach(([k]) => { const ch = S.ch[k], none = S.mode === 'style' && k === 'harmony' && !D.sampleMap.harmony;
+    on[k] = play && (S.jam ? true : (!(none || ch.mute || (anySolo && !ch.solo)) && (k !== 'guide' || (seg.guideOn && lickAtTick(tick) >= 0)))); bs += on[k] ? 1 : 0; });
+  if (bs !== ST.bandSig) { ST.bandSig = bs; document.querySelectorAll('#f-mixer .sp[data-band]').forEach(e => { const k = e.dataset.band, p = on[k];
+    e.style.backgroundImage = `url('assets/chars/${c.band[k]}_${p ? 'attack' : 'idle'}.png')`; e.style.animationDuration = (120 / S.bpm).toFixed(3) + 's'; e.classList.toggle('play', !!p); }); }
+}
+
 /* ================= player ================= */
 function renderPlayer() {
   $('view').innerHTML = `<div class="pad" id="player">
@@ -914,7 +1065,9 @@ function renderPlayer() {
       <div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(D.title)}</div><div style="font-size:11px;color:rgba(255,255,255,.5)">${D.own ? 'Your upload · AI analysis' : D.id + ' · Litejam Track'} · ${D.timeSig} · ${D.bars} bars</div></div>
       <div style="display:flex;gap:6px" id="kchips"></div></div>
     <div class="modebar" id="f-mode"></div>
-    <div class="now" id="now"></div>
+    <div class="now" id="nowbar"></div>
+    <div class="pstage" id="now"></div>
+    <div id="hud"></div>
     <div class="fbbar" id="fbbar"></div>
     <div id="fbBox"></div>
     <div id="legend" class="legend"></div>
@@ -925,7 +1078,7 @@ function renderPlayer() {
     <div id="f-board" style="display:flex;flex-direction:column;gap:8px"></div>
     <div id="f-mixer" style="display:flex;flex-direction:column;gap:8px"></div>
   </div>`;
-  updHeader(); updFretboard(true); updTimeline(); updTransport(); updLicks(); updBoard(); updMixer(); frame(true);
+  updHeader(); updStage(); updFretboard(true); updTimeline(); updTransport(); updLicks(); updBoard(); updMixer(); frame(true);
 }
 function updHeader() {
   if (!$('kchips')) return;
@@ -933,14 +1086,12 @@ function updHeader() {
   $('f-mode').innerHTML = D.own ? `<span class="pill y" style="font-size:11px;padding:5px 8px">AI</span><div class="cap"><b style="color:#fff">Your upload</b> — chords, key and beat grid are detected by AI. Use ✎ Edit chords if something sounds off.</div>` : `<div class="seg"><button class="${S.mode === 'audio' ? 'on' : ''}" data-act="mode" data-v="audio">Audio</button><button class="${S.mode === 'style' ? 'on' : ''}" data-act="mode" data-v="style">Style</button></div>
     <div class="cap">${S.mode === 'audio' ? '<b style="color:#fff">Studio stems</b> — the producer\'s recording. Fixed tempo and key.' : '<b style="color:#fff">MIDI + samples</b> — re-rendered live, so you can change tempo and key.'}</div>`;
 }
-function updNow(bar, force) {
-  const el = $('now'); if (!el) return;
-  const cur = chordAt(bar); let nb = bar + 1;
-  if (S.loop && (bar + 1) * TPB >= S.loop.b) nb = Math.floor(S.loop.a / TPB);
-  const next = nb < D.bars ? chordAt(nb).label : '—';
-  el.innerHTML = `<div><div class="k">NOW</div><div class="c1">${cur.label}</div><div class="beats" id="beats"><i></i><i></i><i></i><i></i></div></div>
-    <div><div class="k" style="color:rgba(255,255,255,.35)">NEXT</div><div class="c2">${next}</div><div style="height:14px"></div></div><div id="turn"></div>`;
-  LAST.beat = -1; LAST.turn = '';
+function updNow(bar) {                         // the chord row stays as it was: NOW large, NEXT beside it, four beat dots
+  const el = $('nowbar'); if (!el) return;
+  let nb = bar + 1; if (S.loop && (bar + 1) * TPB >= S.loop.b) nb = Math.floor(S.loop.a / TPB);
+  el.innerHTML = `<div><div class="k">NOW</div><div class="c1">${chordAt(bar).label}</div><div class="beats" id="beats"><i></i><i></i><i></i><i></i></div></div>
+    <div><div class="k" style="color:rgba(255,255,255,.35)">NEXT</div><div class="c2">${nb < D.bars ? chordAt(nb).label : '—'}</div><div style="height:14px"></div></div>`;
+  LAST.beat = -1;
 }
 function updFretboard(scroll) {
   if (!$('fbBox')) return;
@@ -1013,6 +1164,7 @@ function updTransport() {
 }
 function updLicks() {
   const el = $('f-licks'); if (!el) return;
+  updHud();
   if (D.own) { const sim = CATALOG.filter(t => t.keyPc === keyPc()).sort((a, b) => (b.playable - a.playable) || (b.real - a.real) || b.plays - a.plays).slice(0, 3);
     el.innerHTML = `<div class="lbl">🔒 Only on Litejam Tracks</div><div class="card" style="gap:10px">${[['Style mode', 'Change tempo and key with no audio artefacts — needs the producer’s MIDI + samples.'], ['Guide licks', 'LED + tab licks with Listen / Call & response — written and recorded per track.'], ['Leaderboard & scored runs', 'Scores come from verified licks, so only Litejam Tracks have a leaderboard.'], ['Verified chords & loop points', 'Checked by a musician. Uploads rely on AI detection.']].map(x => `<div class="ci"><i class="n">🔒</i><div><b>${x[0]}</b><small>${x[1]}</small></div></div>`).join('')}</div>
       <div class="lbl">Litejam Tracks in ${NOTE[keyPc()]} <button class="more" data-act="browse" data-d="key" data-v="${keyPc()}">See all ›</button></div>` + sim.map(t => trow(t)).join('') + '<button class="chip" data-act="upDelete" style="align-self:flex-start;color:var(--red)">Delete this upload</button>'; return; }
@@ -1027,15 +1179,17 @@ function updLicks() {
       <div class="acts">${act(i, 'listen', '▶ Listen')}${act(i, 'call', '⇄ Call & response')}${act(i, 'mine', 'My turn')}</div>
       <button class="chal ${S.challenge === i ? 'on' : ''}" data-act="challenge" data-v="${i}">🏆 Scored run${best(i) ? ' · your best ' + best(i) : ' · enter the leaderboard'}</button></div>`).join('') + lickExtras(act, best);
 }
-function updMixer() {
+function updMixer() {                           // the mixer as a band: one Litejam Universe character per stem
   const el = $('f-mixer'); if (!el) return;
-  const anySolo = CHKEYS.some(k => S.ch[k].solo);
-  el.innerHTML = `<div class="lbl">${icon('speaker_icon', 15)} Mixer <small>${D.own ? 'AI-separated — quality depends on the recording' : (S.mode === 'audio' ? 'studio stems' : 'sampled from 03_SAMPLES')}</small></div>` + CH.map(([k, name, srcLbl]) => { const c = S.ch[k];
-    const none = S.mode === 'style' && k === 'harmony' && !D.sampleMap.harmony;
+  const anySolo = CHKEYS.some(k => S.ch[k].solo), band = (ST.cast || cast()).band; ST.bandSig = '';
+  el.innerHTML = `<div class="lbl">🎤 The band <small>tap a member to mute · hold to solo</small></div><div class="band">` + CH.map(([k, name, srcLbl]) => { const c = S.ch[k], who = CHARMAP[band[k]];
+    const none = S.mode === 'style' && k === 'harmony' && !D.sampleMap.harmony, off = none || c.mute || (anySolo && !c.solo);
     const sub = S.mode === 'audio' ? srcLbl : (k === 'guide' ? '05_TABS → synth' : (none ? 'no MIDI / samples yet — silent' : '02_MIDI + 03_SAMPLES'));
-    return `<div class="mx ${(none || c.mute || (anySolo && !c.solo)) ? 'off' : ''}"><div class="n">${name}<small>${sub}</small></div>
-      <button class="b m ${c.mute ? 'on' : ''}" data-act="mute" data-v="${k}">M</button><button class="b s ${c.solo ? 'on' : ''}" data-act="solo" data-v="${k}">S</button>
-      <input type="range" min="0" max="100" value="${c.vol}" data-vol="${k}"><div class="v" id="v-${k}">${c.mute ? '—' : c.vol + '%'}</div></div>`; }).join('');
+    return `<div class="member ${off ? 'off' : ''} ${c.solo ? 'solo' : ''}">
+      <button class="mb" data-act="mute" data-v="${k}" data-hold="${k}" aria-label="${esc(name)}: tap to mute, hold to solo"><div class="sp" data-band="${k}" style="background-image:url('assets/chars/${who.id}_idle.png')"></div><b>${esc(name)}</b><small>${k === 'guide' ? 'Coach · ' : ''}${esc(who.name)}</small></button>
+      ${c.mute ? '<i class="mm">M</i>' : ''}<div class="ms"><button class="s ${c.solo ? 'on' : ''}" data-act="solo" data-v="${k}" aria-label="Solo ${esc(name)}">S</button></div>
+      <input type="range" min="0" max="100" value="${c.vol}" data-vol="${k}" aria-label="${esc(name)} volume"><div class="v" id="v-${k}">${c.mute ? '—' : c.vol + '%'}</div><div class="src" title="${esc(sub)}">${esc(sub)}</div></div>`; }).join('') +
+    `</div><div class="hudnote">${D.own ? 'AI-separated stems — quality depends on the recording.' : (S.mode === 'audio' ? 'Studio stems from the producer.' : 'Re-rendered live from 02_MIDI + 03_SAMPLES.')} A member plays while its stem is audible.</div>`;
 }
 
 /* ================= sheets ================= */
@@ -1119,17 +1273,7 @@ function frame(force) {
       FB.on = on; FB.nx = nxK; ledSync(); }
     const tp = $('tabPh'); if (tp) { const inL = tick >= l.startTick && tick < l.endTick; tp.style.display = inL ? 'block' : 'none';
       if (inL) { const x = 24 + 14 + (tick - l.startTick) / TPB * (TABW - 8); tp.style.left = x + 'px'; const ts = $('tabstrip'); if (ts && AU.playing) ts.scrollLeft = Math.max(0, x - 150); } } }
-  // call & response badge
-  let turn = '';
-  if (cnt) turn = 'c' + cnt.k + (S.lickMode === 'listen' ? 'p' : (cnt.seg.guideOn ? 'l' : 'y'));
-  else if (AU.playing && S.jam) turn = S.jam.state === 'rec' ? 'r' + Math.floor(tick / tps()) : 'p';
-  else if (AU.playing && S.challenge != null) turn = 's';
-  else if (AU.playing && S.loopKind === 'lick' && S.lickMode !== 'listen') turn = curSeg().guideOn ? 'l' : 'y';
-  if (turn !== LAST.turn) { LAST.turn = turn; const t = $('turn'); if (t) {
-    if (turn[0] === 'c') t.innerHTML = `<div class="turn c">${turn[2] === 'l' ? '👂 LISTEN' : (turn[2] === 'y' ? '🎸 YOUR TURN' : '▶ READY')} · <b>${turn[1] === '0' ? 3 : 4}</b></div>`;
-    else if (turn[0] === 'r') t.innerHTML = '<div class="turn r">● REC ' + fmt(+turn.slice(1)) + '</div>';
-    else if (turn === 'p') t.innerHTML = '<div class="turn l">▶ YOUR TAKE</div>';
-    else t.innerHTML = turn === 's' ? '<div class="turn y">🏆 SCORED RUN</div>' : (turn ? `<div class="turn ${turn}">${turn === 'l' ? '👂 LISTEN' : '🎸 YOUR TURN'}</div>` : ''); } }
+  stageTick(tick, cnt, bar);            // spotlight, poses, turn badge, coach bubble, hit feedback, band
   // count-in overlay
   const co = $('countOvl'); if (AU.playing && AU.countUntil && AU.ctx.currentTime < AU.countUntil) { co.classList.add('show'); $('countNum').textContent = Math.min(4, Math.floor((AU.ctx.currentTime - AU.countStart) / AU.countBeat) + 1); } else co.classList.remove('show');
 }
@@ -1145,7 +1289,7 @@ function setTrack(id) {
   Object.assign(S, { mode:'audio', fb:'scale', scale:D.scales[0][0], pos:'full', lick:0, lickMode:'listen', loopKind:null, loop:null, abA:null, bpm:BASE_BPM, tr:0 });
   S.ch.guide.mute = true; CHKEYS.forEach(k => { S.ch[k].solo = false; });
   AU.pausedTick = 0; AU.segs = []; AU.buf = AU.bufs[D.mediaId || id] || {}; AU.ready = !!AU.loaded[D.mediaId || id]; S.chordEdit = false; S.challenge = null; applyMix(true);
-  Object.assign(LAST, { bar:-1, beat:-1, active:null, turn:'' });
+  Object.assign(LAST, { bar:-1, beat:-1, active:null, turn:'' }); HIT.lick = -1; HIT.seg = null; ST.cast = null;
 }
 function openPlayer(preset) { S.tab = 'track'; S.screen = 'player'; if (preset) Object.assign(S, preset); renderView(); return ensureAudio().catch(() => {}); }
 function setMode(m) { if (S.mode === m) return; if (S.jam) stop(); S.mode = m; if (m === 'audio') { S.bpm = BASE_BPM; S.tr = 0; }
@@ -1171,7 +1315,7 @@ const ACT = {
   scale: (d) => { S.scale = d.v; if (S.fb === 'chord') S.fb = 'scale'; renderSheet(); updFretboard(true); },
   pos: (d) => { S.pos = d.v; renderSheet(); updFretboard(true); }, labels: (d) => { S.labels = d.v; renderSheet(); updFretboard(false); },
   targets: () => { S.targets = !S.targets; renderSheet(); updFretboard(false); },
-  seek: (d) => { const t = +d.v * TPB; if (S.loop && (t < S.loop.a || t >= S.loop.b)) { S.loopKind = null; S.loop = null; updTimeline(); updTransport(); updLicks(); } AU.pausedTick = t; restart(t); },
+  seek: (d) => { const t = +d.v * TPB; if (S.loop && (t < S.loop.a || t >= S.loop.b)) { S.loopKind = null; S.loop = null; S.challenge = null; updTimeline(); updTransport(); updLicks(); } AU.pausedTick = t; restart(t); },
   play: () => { if (AU.playing) { const ch = S.challenge != null; S.challenge = null; stop(); if (ch) { updLicks(); toast('Scored run cancelled.'); } } else play(); },
   metro: () => { S.metro = !S.metro; updTransport(); updLicks(); }, countIn: () => { S.countIn = !S.countIn; updTransport(); },
   needStyle: () => toast(D.own ? 'Key change needs Style mode (MIDI + samples) — only Litejam Tracks have it.' : 'Tempo and key are fixed in Audio mode. Switch to Style to change them.'),
@@ -1185,10 +1329,16 @@ const ACT = {
   mute: (d) => { S.ch[d.v].mute = !S.ch[d.v].mute; applyMix(); updMixer(); }, solo: (d) => { S.ch[d.v].solo = !S.ch[d.v].solo; applyMix(); updMixer(); },
   sKey: (d) => { S.sKey = +d.v; renderScaleTab(); }, sType: (d) => { S.sType = d.v; renderScaleTab(); },
   demo: (d) => demo(d.v),
+  coachTip: () => coachTip(),
   lickCount: () => { S.lickCount = !S.lickCount; updLicks(); toast(S.lickCount ? 'Half-bar count-in on: 2 beats before every lick pass.' : 'Count-in off: lick passes loop back to back.'); },
   pickTrack: (d) => { if (D.id !== d.v) setTrack(d.v); renderNotes(); if (S.tab === 'track' && S.screen === 'player') openPlayer(); else renderView(); },
 };
-document.addEventListener('click', (e) => { const el = e.target.closest('[data-act]'); if (!el) return; const fn = ACT[el.dataset.act]; if (fn) fn(el.dataset, e, el); });
+let holdT = null, holdAt = 0;                 // band members: tap = mute, hold = solo
+document.addEventListener('click', (e) => { const el = e.target.closest('[data-act]'); if (!el) return; if (Date.now() - holdAt < 700 && el.closest('.band')) return; const fn = ACT[el.dataset.act]; if (fn) fn(el.dataset, e, el); });
+document.addEventListener('pointerdown', (e) => { const b = e.target.closest('[data-hold]'); clearTimeout(holdT); if (!b) return; const k = b.dataset.hold;
+  holdT = setTimeout(() => { holdAt = Date.now(); ACT.solo({ v:k }); const nm = (CH.find(c => c[0] === k) || [])[1] || k; toast(S.ch[k].solo ? nm + ' solo — hold again to bring the band back.' : nm + ' solo off.'); }, 450); });
+['pointerup', 'pointercancel'].forEach(t => document.addEventListener(t, () => clearTimeout(holdT)));
+document.addEventListener('contextmenu', (e) => { if (e.target.closest('[data-hold]')) e.preventDefault(); });
 document.addEventListener('input', (e) => { const k = e.target.dataset && e.target.dataset.vol; if (!k) return; S.ch[k].vol = +e.target.value; applyMix(); const v = $('v-' + k); if (v) v.textContent = S.ch[k].mute ? '—' : S.ch[k].vol + '%'; });
 
 /* ================= feature notes (Thai) ================= */
@@ -1224,6 +1374,12 @@ FEATURES.push(['F14', 'All licks + Jam & Record — เฉพาะ Audio mode',
   ['04_GUIDE_LICKS › Licks_All_Perf.wav', '04_GUIDE_LICKS › Licks_Demo.wav'], [['LJ001', 'ok', 'มีครบทั้งสองไฟล์ All licks คือบาร์ 1–9'], ['LJ002', 'ok', 'มีครบทั้งสองไฟล์ All licks คือบาร์ 1–8'], ['prototype', 'new', 'Take เก็บไว้จนกว่าจะรีเฟรชหน้า · ต้องอนุญาตไมโครโฟน ถ้าไม่มีไมค์จะบันทึกเป็น take เงียบเพื่อให้เห็นขั้นตอน · คะแนนของ Scored run ยังเป็นเลขสุ่ม']]]);
 FEATURES.push(['F15', 'เชื่อมกีตาร์จริงผ่าน BLE — ไฟ LED ตามหน้าจอ', 'ปุ่ม Connect ที่แถบบนสุดเชื่อมกีตาร์ Litejam ผ่าน Web Bluetooth เมื่อเชื่อมแล้วไฟบนเฟรตบอร์ดจริงจะตามหน้าจอทุกโหมด: สเกล (root แดง, โน้ตสเกลน้ำเงิน, Target notes ขาว), Chord tones, และ Lick ที่ไฟเขียวคือโน้ตที่ต้องเล่นตอนนี้ ไฟเหลืองคือโน้ตถัดไป รวมถึงแท็บ Scale เดิม มีหน้าสถานะแสดงชื่อกีตาร์ แบตเตอรี่ จำนวนเฟรมที่ส่ง ปุ่มทดสอบไฟ และปุ่มปิดไฟ',
   ['โปรโตคอลเดียวกับแอป: service 00EE › characteristic EE04'], [['ต้องทดสอบกับกีตาร์จริง', 'new', 'เขียนตามรูปแบบเฟรมของแอป Litejam และทดสอบกับอุปกรณ์จำลองแล้ว แต่ยังไม่ได้ลองกับกีตาร์จริง · ใช้ได้ใน Chrome หรือ Edge บนคอมพิวเตอร์และ Android ผ่าน https หรือ localhost · iPhone และ iPad เชื่อมไม่ได้ · ต้องปิดแอป Litejam บนมือถือก่อน']]]);
+FEATURES.push(['F16', 'เวที + วงเป็นตัวละคร Litejam Universe', 'ส่วนบนของ player เป็นเวที สีฉากตาม Style ของแทร็ก โค้ชประจำ Style ยืนซ้าย ตัวละครของผู้ใช้ยืนขวา (ใช้ตัวละครจากโปรไฟล์ แตะเพื่อเปลี่ยน) คอร์ด NOW / NEXT และจุดจังหวะยังอยู่แถวเดิมเหนือเวที ตัวใหญ่ชัดเหมือนก่อน ตอนเล่นแสงไฟส่องคนที่กำลังเล่นและตัวละครดีดตามจังหวะ 2 บีตต่อรอบ แตะโค้ชเพื่อขอคำแนะนำ เช่น โน้ตเป้าหมายของคอร์ดตอนนั้น Mixer เปลี่ยนเป็น “The band”: stem ละ 1 ตัวละคร แตะเพื่อ mute กดค้างเพื่อ solo (มีปุ่ม S ให้ด้วย) ตัวละครขยับเฉพาะตอนที่ stem นั้นมีเสียง',
+  ['Litejam Universe Pixel V2 › idle / attack / slash atlas', '01_AUDIO › stems', 'Metadata MASTER › style'], [['ใช้ได้แล้ว', 'ok', 'ใช้ sprite จริง 8 ตัวละคร · โค้ชต่อ Style และตัวละครประจำ stem เป็นข้อเสนอ ยังแก้ได้'], ['ต้องการ source เพิ่ม', 'v2', 'ทุกตัวละครตอนนี้ถือกีตาร์ ถ้าต้องการมือกลอง / เบส / คีย์บอร์ดที่ตรงเครื่อง ต้องมี sprite ท่าใหม่']]]);
+FEATURES.push(['F17', 'Call & response กับโค้ช', 'ตอนฝึก lick เวทีสูงขึ้นและแสดงว่าใครเล่นอยู่: รอบ LISTEN ไฟส่องโค้ช โค้ชเล่นพร้อมบอลลูนคำแนะนำ 1 ประโยคต่อรอบ รอบ YOUR TURN ไฟย้ายมาที่ตัวละครของผู้ใช้ ป้ายซ้ายบนบอกรอบและนับ 3–4 ตอน count-in ป้ายขวาบนบอกบาร์ คำแนะนำสร้างจากโน้ตของ lick นั้นจริง ๆ เช่น โน้ตแรกอยู่เฟรตไหนสายไหน โน้ตที่ต้อง bend ขึ้นเท่าไร โน้ตที่ใส่ vibrato และโน้ตจบเป็นโน้ตอะไรของคอร์ด',
+  ['05_TABS › .gp (string, fret, bend, vibrato)', '04_GUIDE_LICKS › Perf.wav', 'Chord_Progression'], [['LJ001 + LJ002', 'ok', 'ใช้ได้กับทุก lick และ All licks ทั้ง Listen, Call & response และ My turn']]]);
+FEATURES.push(['F18', 'YOUR TURN — ผลตอบรับรายโน้ต', 'ตอนผู้ใช้เล่น (Call & response, My turn, Scored run) แต่ละโน้ตขึ้น PERFECT / GOOD / MISS พร้อมแต้ม มี COMBO แถบจุดรายโน้ตใต้เวที และ Power meter ที่เต็มแล้วตัวละครทำท่า Ultimate โค้ชชมเมื่อ bend หรือ vibrato ตรง ใน Scored run มี “Ghost” คือผู้เล่นอันดับถัดไปบน leaderboard ให้ไล่ตาม และคะแนนสรุปท้ายรอบคิดจากผลรายโน้ตชุดเดียวกับที่เห็นบนเวที',
+  ['05_TABS (โน้ตเฉลย)', 'Litejam Universe › fx-charge / fx-charged-bolt'], [['ผลตัดสินเป็นการจำลอง', 'new', 'prototype สุ่มผลของแต่ละโน้ต เพราะยังไม่มี note detection แอปจริงต้องฟังเสียงกีตาร์หรืออ่านจากกีตาร์ Litejam'], ['กติกาเป็นข้อเสนอ', 'new', 'lick ละ 1,000 แต้ม · GOOD ได้ 60% · Power เต็มแล้วได้ท่า Ultimate อย่างเดียว ยังไม่บวกแต้ม']]]);
 const OWN_ROWS = [
   ['เล่นเสียง + Mixer', 'stem จริงจาก producer + กีตาร์ไกด์', 'stem ที่ AI แยก (Drums / Bass / Other) คุณภาพขึ้นกับไฟล์'],
   ['Chord timeline', 'นักดนตรีตรวจแล้ว', 'AI ถอด แก้เองได้ทีละบาร์หรือทุกบาร์ที่เป็นคอร์ดเดียวกัน'],
@@ -1273,11 +1429,13 @@ function demo(id) {
   if (id === 'F9') { stop(); S.tab = 'scale'; S.sKey = D.keyPc; S.sType = D.id === 'LJ001' ? 'Pentatonic Blues' : 'Pentatonic minor'; renderView(); return scrollToId('f-jam'); }
   const go = (fn, target) => openPlayer().then(() => { fn(); scrollToId(target); });
   if (id === 'F2') go(() => { setMode('audio'); if (!AU.playing) play(); }, 'f-mixer');
-  if (id === 'F3') go(() => { if (!AU.playing) play(); }, 'now');
+  if (id === 'F3') go(() => { if (!AU.playing) play(); }, 'nowbar');
   if (id === 'F4') go(() => { S.fb = 'scale'; S.scale = D.scales[1][0]; S.targets = true; updFretboard(true); openSheet('scale'); }, 'now');
   if (id === 'F5') go(() => { setLoop('blues', D.loop.a, D.loop.b); if (!AU.playing) play(); }, 'f-timeline');
   if (id === 'F6') go(() => { setMode('style'); S.bpm = BASE_BPM - 10; updHeader(); updTransport(); restart(); if (!AU.playing) play(); }, 'f-mode');
-  if (id === 'F7') go(() => { startLick(0, 'call'); }, 'now');
+  if (id === 'F7' || id === 'F17') go(() => { startLick(0, 'call'); }, 'now');
+  if (id === 'F16') go(() => { if (!AU.playing) play(); }, 'now');
+  if (id === 'F18') go(() => { startLick(0, 'mine'); }, 'now');
   if (id === 'F8') go(() => { S.metro = true; S.countIn = true; updTransport(); if (AU.playing) stop(); play(); }, 'f-transport');
 }
 
