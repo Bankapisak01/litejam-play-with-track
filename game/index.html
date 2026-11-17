@@ -309,6 +309,13 @@ input[type=range]::-moz-range-thumb { width:16px; height:16px; border-radius:50%
 .promo { border:1px dashed #4a4a4a; border-radius:10px; padding:12px; display:flex; align-items:center; gap:12px; } .promo div { flex:1; min-width:0; font-size:13px; } .promo small { display:block; font-size:11px; color:rgba(255,255,255,.5); line-height:1.4; margin-top:3px; }
 .band.s .member { padding:8px 6px 10px; }
 .jnote { display:flex; align-items:center; gap:10px; background:rgba(255,32,32,.08); border:1px dashed rgba(255,90,90,.4); border-radius:8px; padding:8px 10px; font-size:12px; color:#ff9a9a; } .jnote span { flex:1; min-width:0; line-height:1.35; } .jnote b { color:#fff; }
+.duet { position:relative; height:260px; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,.12); display:flex; background:#000; flex-shrink:0; }
+.dpane { position:relative; flex:1; min-width:0; overflow:hidden; display:flex; align-items:flex-end; justify-content:center; background:#111; }
+.dpane video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; } .dpane video.mirror { transform:scaleX(-1); }
+.dpane.art { border-left:2px solid #000; } .dpane.art .sp { width:176px; height:176px; margin-bottom:22px; filter:brightness(.55) saturate(.6); transition:filter .2s; } .dpane.art.live .sp { filter:none; }
+.dtag { position:absolute; left:8px; bottom:8px; font-size:11px; font-weight:700; background:rgba(0,0,0,.62); border-radius:5px; padding:3px 7px; z-index:2; white-space:nowrap; }
+.dph { position:absolute; right:8px; top:8px; font-size:9.5px; color:rgba(255,255,255,.7); background:rgba(0,0,0,.5); border-radius:4px; padding:2px 6px; z-index:2; }
+a.ib { display:flex; align-items:center; justify-content:center; text-decoration:none; } .rlbl { font-size:12px; font-weight:700; color:#ff7b7b; }
 .abtn.rec.armed { background:var(--red); color:#fff; border-color:var(--red); } .lick .hudnote b { color:rgba(255,255,255,.75); }
 .mixtog { width:100%; text-align:left; background:var(--panel); border-radius:8px; padding:10px 12px; } .mixtog i { font-style:normal; color:rgba(255,255,255,.6); font-size:13px; width:14px; text-align:center; }
 .abtn.score.off { opacity:.75; border-style:dashed; font-weight:400; }
@@ -337,6 +344,6 @@ input[type=range]::-moz-range-thumb { width:16px; height:16px; border-radius:50%
 <script src="media/lj_data.js"></script>
 <script src="media/lj001_media.js"></script>
 <script src="media/lj002_media.js"></script>
-<script src="app.js?v=20261117e"></script>
+<script src="app.js?v=20261117f"></script>
 </body>
 </html>
