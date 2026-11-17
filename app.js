@@ -1205,7 +1205,7 @@ function setSpeed(v) {
   if (S.challenge != null) S.challenge = null;                                   // a scored run only counts at full speed
   if (v === 'full' && !S.tr) { if (was === 'audio') return; setMode('audio'); return toast('Full speed: back to the studio recording.'); }
   S.bpm = simpleBpm(v);                                                          // a transposed key stays in Style mode, also at full tempo
-  if (was === 'style') { updHeader(); updTransport(); updLicks(); restart(); } else setMode('style');
+  if (was === 'style') { updHeader(); updTransport(); updLicks(); restart(); } else { setMode('style'); S.fromSpeed = true; }   // remembered so Pro does not inherit a Style mode the player never chose
   if (was === 'audio') toast('Slow practice: the band switches to MIDI' + (D.sampleMap && !D.sampleMap.harmony ? ' (drums and bass on this track)' : '') + ' so the tempo can drop. Scores count at full speed.');
 }
 function updLicks() {
@@ -1226,6 +1226,7 @@ function updLicks() {
     `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><div class="seg"><button class="${S.lickOnce ? '' : 'on'}" data-act="passMode" data-v="loop">${icon('loop_icon', 13)} Loop</button><button class="${S.lickOnce ? 'on' : ''}" data-act="passMode" data-v="once">1× Once</button></div><button class="tog ${S.metro ? 'on' : ''}" data-act="metro">${icon('metronome_icon', 14)}Metronome</button>` +
     (S.loopKind === 'lick' ? '<button class="chip" data-act="exitLick">✕ Exit lick practice</button>' : '') + '</div>' +
     '<div class="hudnote">Pro is free practice: one bar of count-in at the start, then the rounds run back to back. Scores and the leaderboard are in Normal view.</div>' +
+    (S.mode === 'style' ? '<div class="jnote"><span>● <b>Jam & Record</b> works in Audio mode (studio stems).</span><button class="abtn rec sm" data-act="mode" data-v="audio">Switch to Audio</button></div>' : '') +
     D.licks.map((l, i) => lickCardPro(i, act)).join('') + lickCardPro(D.licks.length, act);
 }
 const STEPCAP = { listen:'<b>Listen</b> — the coach plays. Watch the lights and the tab.', call:'<b>Copy me</b> — the coach plays one round, then it is your turn.', mine:'Tap <b>Listen</b> or <b>Copy me</b> to practise again, or play for score.' };
@@ -1250,8 +1251,10 @@ function setView(pro, quiet) {
   if (S.jam) stop(); S.jamPick = null;                                           // Jam & Record lives in Pro
   if (S.pro) S.challenge = null;                                                 // scored runs live in Normal
   S.lickMode = viewMode(S.lickMode);
+  const back = S.pro && S.mode === 'style' && S.fromSpeed;                       // Slow / Medium is Normal's setting: Pro opens on the studio recording at full speed
+  if (back) setMode('audio');
   updHeader(); updTransport(); updLicks(); updBoard(); updMixer(); updMore();
-  if (!quiet) toast(S.pro ? 'Pro view: call & response, solo practice, Jam & Record on every lick, tempo and key. No scores here.' : 'Normal view: copy the coach, play for score, climb the leaderboard.');
+  if (!quiet) toast(S.pro ? (back ? 'Pro view: back to full speed on the studio recording. Switch to Style to change tempo or key.' : 'Pro view: call & response, solo practice, Jam & Record on every lick, tempo and key. No scores here.') : 'Normal view: copy the coach, play for score, climb the leaderboard.');
 }
 function updMixer() {                           // the plain version's mixer (M / S / volume per stem), folded away under a toggle
   const el = $('f-mixer'); if (!el) return;
@@ -1358,13 +1361,13 @@ function setLoop(kind, a, b) { if (S.jam) stop(); S.loopKind = kind; S.loop = ki
 function setTrack(id) {
   if (AU.ctx && AU.playing) stop();
   D = DATA.packs[id]; buildAllLick(D); TPB = D.ticksPerBar; BEAT = D.beatTicks; END = D.endTick; BASE_BPM = D.bpm; PPQ = D.ppq; CH = D.channels;
-  Object.assign(S, { mode:'audio', fb:'scale', scale:D.scales[0][0], pos:'full', lick:0, lickMode:'listen', loopKind:null, loop:null, abA:null, bpm:BASE_BPM, tr:0 });
+  Object.assign(S, { mode:'audio', fromSpeed:false, fb:'scale', scale:D.scales[0][0], pos:'full', lick:0, lickMode:'listen', loopKind:null, loop:null, abA:null, bpm:BASE_BPM, tr:0 });
   S.ch.guide.mute = true; CHKEYS.forEach(k => { S.ch[k].solo = false; });
   AU.pausedTick = 0; AU.segs = []; AU.buf = AU.bufs[D.mediaId || id] || {}; AU.ready = !!AU.loaded[D.mediaId || id]; S.chordEdit = false; S.challenge = null; applyMix(true);
   Object.assign(LAST, { bar:-1, beat:-1, active:null, turn:'' }); HIT.lick = -1; HIT.seg = null; ST.cast = null;
 }
 function openPlayer(preset) { S.tab = 'track'; S.screen = 'player'; if (preset) Object.assign(S, preset); renderView(); return ensureAudio().catch(() => {}); }
-function setMode(m) { if (S.mode === m) return; if (S.jam) stop(); S.mode = m; if (m === 'audio') { S.bpm = BASE_BPM; S.tr = 0; }
+function setMode(m) { if (S.mode === m) return; if (S.jam) stop(); S.mode = m; S.fromSpeed = false; if (m === 'audio') { S.bpm = BASE_BPM; S.tr = 0; }
   updHeader(); updFretboard(true); updTimeline(); updTransport(); updLicks(); updMixer(); restart(); }
 function startLick(i, m) {
   if (S.jam) stop();
@@ -1391,8 +1394,8 @@ const ACT = {
   play: () => { if (AU.playing) { const ch = S.challenge != null; S.challenge = null; stop(); if (ch) { updLicks(); toast('Scored run cancelled.'); } } else play(); },
   metro: () => { S.metro = !S.metro; updTransport(); updLicks(); }, countIn: () => { S.countIn = !S.countIn; updTransport(); },
   needStyle: () => toast(D.own ? 'Key change needs Style mode (MIDI + samples) — only Litejam Tracks have it.' : 'Tempo and key are fixed in Audio mode. Switch to Style to change them.'),
-  bpm: (d) => { if (S.jam) stop(); S.bpm = Math.max(Math.round(BASE_BPM * 0.7 / 5) * 5, Math.min(Math.round(BASE_BPM * 1.4 / 5) * 5, S.bpm + +d.v)); updHeader(); updTransport(); restart(); },
-  tr: (d) => { if (S.jam) stop(); S.tr = Math.max(-5, Math.min(5, S.tr + +d.v)); updHeader(); updFretboard(true); updTimeline(); updTransport(); updLicks(); restart(); },
+  bpm: (d) => { if (S.jam) stop(); S.fromSpeed = false; S.bpm = Math.max(Math.round(BASE_BPM * 0.7 / 5) * 5, Math.min(Math.round(BASE_BPM * 1.4 / 5) * 5, S.bpm + +d.v)); updHeader(); updTransport(); restart(); },
+  tr: (d) => { if (S.jam) stop(); S.fromSpeed = false; S.tr = Math.max(-5, Math.min(5, S.tr + +d.v)); updHeader(); updFretboard(true); updTimeline(); updTransport(); updLicks(); restart(); },
   loopSet: (d) => { if (d.v === 'off') setLoop(null); else setLoop('blues', D.loop.a, D.loop.b); closeSheet(); },
   ab: (d) => { const b = +d.v; if (S.abA == null) { S.abA = b; renderSheet(); } else { const a = Math.min(S.abA, b), z = Math.max(S.abA, b); S.abA = null; setLoop('ab', a * TPB, (z + 1) * TPB); closeSheet(); } },
   lickLoop: (d) => { closeSheet(); startLick(+d.v, viewMode(S.lickMode)); },
@@ -1449,7 +1452,7 @@ const FEATURES = [
 ];
 FEATURES.push(['F13', 'โปรไฟล์ + Scored run + Leaderboard ต่อแทร็ก', 'ผู้ใช้มีโปรไฟล์ (ชื่อที่แสดง + Avatar เป็นตัวละคร Litejam Universe หรือรูป/GIF ของตัวเอง) แต่ละ lick มีปุ่ม Scored run: นับเข้าครึ่งบาร์ เล่น 1 รอบโดยไม่มีเสียงไกด์ แล้วขึ้นผลคะแนน (คะแนน, ดาว, % โน้ตที่โดน, ความแม่นจังหวะ, อันดับที่เปลี่ยน) คะแนนของแทร็ก = คะแนนดีที่สุดของแต่ละ lick รวมกัน Leaderboard ของแต่ละ backing track มีแท็บ This week / All time / Friends โพเดียม 3 อันดับแรกพร้อม Avatar และแถวของผู้ใช้ปักไว้เสมอ หน้ารายการเพลงแสดงคะแนนดีที่สุดของผู้ใช้ด้วย Scored run และ Leaderboard อยู่ใน Normal view เท่านั้น ส่วน Pro เป็นการฝึกอิสระที่ไม่มีคะแนน',
   ['04_GUIDE_LICKS + 05_TABS (โน้ตเฉลยของ lick)', 'บัญชีผู้ใช้'], [['ดีไซน์เผื่ออนาคต', 'new', 'คะแนนและรายชื่อใน prototype เป็นข้อมูลจำลอง ของจริงต้องมี (1) การตรวจจับโน้ตจากกีตาร์ (2) ระบบบัญชีและ backend เก็บคะแนน กติกาที่วางไว้: นับเฉพาะ Audio mode ที่ tempo เดิม เพื่อให้ทุกคนเล่นโจทย์เดียวกัน และเพลงที่อัปโหลดเองไม่มี leaderboard']]]);
-FEATURES.push(['F14', 'All licks + Jam & Record ในทุก lick (Pro view · Audio mode)', 'การ์ด All licks รวมทุก lick ของแทร็กเป็นโซโลเดียว ฝึกได้เหมือน lick เดี่ยว ใน Pro view ที่ Audio mode ทุกการ์ด (Lick 1–3 และ All licks) มีปุ่มแดง ● Jam & Record แตะแล้วเลือกแบบการอัด 2 แบบ: Call & response = เล่น lick ต้นฉบับ 1 รอบ ตามด้วย backing track ช่วงบาร์เดียวกันให้ผู้ใช้ตอบ สลับกันไป, My turn = backing track อย่างเดียว ทั้งสองแบบนับเข้า 1 บาร์ครั้งเดียวตอนเริ่ม แล้วเล่นต่อกันโดยไม่มี count-in คั่น ตัวเลือก Loop / Once ใช้กับการอัดด้วย: Once อัด 1 รอบแล้วบันทึกเอง, Loop อัดจนกว่าจะกดหยุด (จำกัดประมาณ 3 นาที) Take เก็บไว้ใต้ lick ที่อัด เปิดฟังพร้อมวงแบบเดียวกับตอนอัดได้ เปลี่ยนชื่อหรือลบได้ ไม่มีคะแนน Style mode ไม่มี Jam & Record การ์ด Jam & Record แบบเดิมที่อัดทับไฟล์ Licks_Demo ทั้งเพลงถูกตัดออกแล้ว',
+FEATURES.push(['F14', 'All licks + Jam & Record ในทุก lick (Pro view · Audio mode)', 'การ์ด All licks รวมทุก lick ของแทร็กเป็นโซโลเดียว ฝึกได้เหมือน lick เดี่ยว ใน Pro view ที่ Audio mode ทุกการ์ด (Lick 1–3 และ All licks) มีปุ่มแดง ● Jam & Record แตะแล้วเลือกแบบการอัด 2 แบบ: Call & response = เล่น lick ต้นฉบับ 1 รอบ ตามด้วย backing track ช่วงบาร์เดียวกันให้ผู้ใช้ตอบ สลับกันไป, My turn = backing track อย่างเดียว ทั้งสองแบบนับเข้า 1 บาร์ครั้งเดียวตอนเริ่ม แล้วเล่นต่อกันโดยไม่มี count-in คั่น ตัวเลือก Loop / Once ใช้กับการอัดด้วย: Once อัด 1 รอบแล้วบันทึกเอง, Loop อัดจนกว่าจะกดหยุด (จำกัดประมาณ 3 นาที) Take เก็บไว้ใต้ lick ที่อัด เปิดฟังพร้อมวงแบบเดียวกับตอนอัดได้ เปลี่ยนชื่อหรือลบได้ ไม่มีคะแนน Style mode ไม่มี Jam & Record แต่มีแถบบอกเหตุผลเหนือการ์ด lick พร้อมปุ่ม Switch to Audio การ์ด Jam & Record แบบเดิมที่อัดทับไฟล์ Licks_Demo ทั้งเพลงถูกตัดออกแล้ว',
   ['01_AUDIO › stems', '04_GUIDE_LICKS › Licks_All_Perf.wav'], [['LJ001 + LJ002', 'ok', 'อัดได้ทุก lick และ All licks ใน Audio mode'], ['prototype', 'new', 'Take เก็บไว้จนกว่าจะรีเฟรชหน้า · ต้องอนุญาตไมโครโฟน ถ้าไม่มีไมค์จะบันทึกเป็น take เงียบเพื่อให้เห็นขั้นตอน · ไฟล์ Licks_Demo.wav ไม่ได้ใช้แล้วแต่ยังฝังอยู่ใน media']]]);
 FEATURES.push(['F15', 'เชื่อมกีตาร์จริงผ่าน BLE — ไฟ LED ตามหน้าจอ', 'ปุ่ม Connect ที่แถบบนสุดเชื่อมกีตาร์ Litejam ผ่าน Web Bluetooth เมื่อเชื่อมแล้วไฟบนเฟรตบอร์ดจริงจะตามหน้าจอทุกโหมด: สเกล (root แดง, โน้ตสเกลน้ำเงิน, Target notes ขาว), Chord tones, และ Lick ที่ไฟเขียวคือโน้ตที่ต้องเล่นตอนนี้ ไฟเหลืองคือโน้ตถัดไป รวมถึงแท็บ Scale เดิม มีหน้าสถานะแสดงชื่อกีตาร์ แบตเตอรี่ จำนวนเฟรมที่ส่ง ปุ่มทดสอบไฟ และปุ่มปิดไฟ',
   ['โปรโตคอลเดียวกับแอป: service 00EE › characteristic EE04'], [['ต้องทดสอบกับกีตาร์จริง', 'new', 'เขียนตามรูปแบบเฟรมของแอป Litejam และทดสอบกับอุปกรณ์จำลองแล้ว แต่ยังไม่ได้ลองกับกีตาร์จริง · ใช้ได้ใน Chrome หรือ Edge บนคอมพิวเตอร์และ Android ผ่าน https หรือ localhost · iPhone และ iPad เชื่อมไม่ได้ · ต้องปิดแอป Litejam บนมือถือก่อน']]]);
@@ -1459,7 +1462,7 @@ FEATURES.push(['F17', 'Call & response กับโค้ช', 'ตอนฝึ�
   ['05_TABS › .gp (string, fret, bend, vibrato)', '04_GUIDE_LICKS › Perf.wav', 'Chord_Progression'], [['LJ001 + LJ002', 'ok', 'ใช้ได้กับทุก lick และ All licks ทั้ง Listen, Call & response และ My turn']]]);
 FEATURES.push(['F18', 'YOUR TURN — ผลตอบรับรายโน้ต', 'ตอนผู้ใช้เล่น (Call & response, My turn, Scored run) แต่ละโน้ตขึ้น PERFECT / GOOD / MISS พร้อมแต้ม มี COMBO แถบจุดรายโน้ตใต้เวที และ Power meter ที่เต็มแล้วตัวละครทำท่า Ultimate โค้ชชมเมื่อ bend หรือ vibrato ตรง ใน Scored run มี “Ghost” คือผู้เล่นอันดับถัดไปบน leaderboard ให้ไล่ตาม และคะแนนสรุปท้ายรอบคิดจากผลรายโน้ตชุดเดียวกับที่เห็นบนเวที',
   ['05_TABS (โน้ตเฉลย)', 'Litejam Universe › fx-charge / fx-charged-bolt'], [['ผลตัดสินเป็นการจำลอง', 'new', 'prototype สุ่มผลของแต่ละโน้ต เพราะยังไม่มี note detection แอปจริงต้องฟังเสียงกีตาร์หรืออ่านจากกีตาร์ Litejam'], ['กติกาเป็นข้อเสนอ', 'new', 'lick ละ 1,000 แต้ม · GOOD ได้ 60% · Power เต็มแล้วได้ท่า Ultimate อย่างเดียว ยังไม่บวกแต้ม']]]);
-FEATURES.push(['F19', 'Normal view / Pro view — สองแบบที่ต่างกันจริง', 'หน้า player มี 2 มุมมอง สลับด้วยสวิตช์ “Pro” ข้างแถบโหมด ค่าเริ่มต้นคือ Normal Normal = เล่นตามโค้ชแล้วเก็บคะแนน: แต่ละ lick มีปุ่มเขียวปุ่มเดียวคือ ▶ Practise การ์ดที่กำลังฝึกกางออกเป็น 👂 Listen (ฟ้า) กับ 🔁 Copy me (ฟ้าไล่เขียว) และปุ่มทอง 🏆 Play for score มี Leaderboard แถวเดียว และแถว Speed 3 ระดับ 🐢 Slow (70%) · Medium (85%) · ⚡ Full ที่สลับไป Style mode ให้เอง Normal ไม่มี My turn Pro = ฝึกอิสระ ไม่มีคะแนนและไม่มี Leaderboard: แต่ละ lick เหลือ ⇄ Call & response กับ 🎸 My turn และปุ่มแดง ● Jam & Record ในทุก lick (เฉพาะ Audio mode) พร้อม Audio / Style (เปลี่ยน tempo และคีย์) Pro นับเข้า 1 บาร์เฉพาะตอนเริ่มเล่นเสมอ ไม่มี count-in คั่นระหว่างรอบ แต่ละรอบเล่นต่อกันเหมือนแจมจริง และเลือกได้ว่า Loop (วนไปเรื่อย ๆ) หรือ Once (รอบเดียวแล้วหยุด) Mixer แบบพับได้มีทั้งสองมุมมอง สีปุ่มมีความหมายเดียวกันตลอด: เขียว = เล่น, ฟ้า = ฟัง, ทอง = คะแนน, แดง = อัดเสียง', ['ไม่ใช้ asset เพิ่ม'], [['prototype', 'new', 'จำมุมมองล่าสุดไว้ในเครื่อง · ปุ่ม “ลองดู” ของ F8, F14, F18 เปิด Pro ให้เอง และ F13 กลับมา Normal ให้เอง'], ['LJ002', 'wait', 'Slow / Medium เหลือแค่กลองกับเบส เพราะยังไม่มี MIDI + samples ของ harmony']]]);
+FEATURES.push(['F19', 'Normal view / Pro view — สองแบบที่ต่างกันจริง', 'หน้า player มี 2 มุมมอง สลับด้วยสวิตช์ “Pro” ข้างแถบโหมด ค่าเริ่มต้นคือ Normal Normal = เล่นตามโค้ชแล้วเก็บคะแนน: แต่ละ lick มีปุ่มเขียวปุ่มเดียวคือ ▶ Practise การ์ดที่กำลังฝึกกางออกเป็น 👂 Listen (ฟ้า) กับ 🔁 Copy me (ฟ้าไล่เขียว) และปุ่มทอง 🏆 Play for score มี Leaderboard แถวเดียว และแถว Speed 3 ระดับ 🐢 Slow (70%) · Medium (85%) · ⚡ Full ที่สลับไป Style mode ให้เอง Normal ไม่มี My turn Pro = ฝึกอิสระ ไม่มีคะแนนและไม่มี Leaderboard: แต่ละ lick เหลือ ⇄ Call & response กับ 🎸 My turn และปุ่มแดง ● Jam & Record ในทุก lick (เฉพาะ Audio mode) พร้อม Audio / Style (เปลี่ยน tempo และคีย์) Pro นับเข้า 1 บาร์เฉพาะตอนเริ่มเล่นเสมอ ไม่มี count-in คั่นระหว่างรอบ แต่ละรอบเล่นต่อกันเหมือนแจมจริง และเลือกได้ว่า Loop (วนไปเรื่อย ๆ) หรือ Once (รอบเดียวแล้วหยุด) ถ้าตั้ง Slow / Medium ไว้ใน Normal แล้วเปิด Pro ระบบจะกลับมา Audio ที่ความเร็วเต็มให้เอง เพราะ Slow / Medium เป็นการตั้งค่าของ Normal (ถ้าผู้ใช้เลือก Style เองใน Pro จะไม่ถูกรีเซ็ต) Mixer แบบพับได้มีทั้งสองมุมมอง สีปุ่มมีความหมายเดียวกันตลอด: เขียว = เล่น, ฟ้า = ฟัง, ทอง = คะแนน, แดง = อัดเสียง', ['ไม่ใช้ asset เพิ่ม'], [['prototype', 'new', 'จำมุมมองล่าสุดไว้ในเครื่อง · ปุ่ม “ลองดู” ของ F8, F14, F18 เปิด Pro ให้เอง และ F13 กลับมา Normal ให้เอง'], ['LJ002', 'wait', 'Slow / Medium เหลือแค่กลองกับเบส เพราะยังไม่มี MIDI + samples ของ harmony']]]);
 const OWN_ROWS = [
   ['เล่นเสียง + Mixer', 'stem จริงจาก producer + กีตาร์ไกด์', 'stem ที่ AI แยก (Drums / Bass / Other) คุณภาพขึ้นกับไฟล์'],
   ['Chord timeline', 'นักดนตรีตรวจแล้ว', 'AI ถอด แก้เองได้ทีละบาร์หรือทุกบาร์ที่เป็นคอร์ดเดียวกัน'],
