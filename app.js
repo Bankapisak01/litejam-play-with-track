@@ -95,14 +95,17 @@ function click(t, accent) {
   AU.voices.push({ src:o, g, end:t + 0.1 });
 }
 // lick practice: half-bar (2-beat) count-in before every pass so the player is ready for the first note
-const lickCountOn = () => S.loopKind === 'lick' && (S.lickCount || S.challenge != null) && !!S.loop && !S.jam;   // a jam take loops back to back so a take replays in sync
+const lickCountOn = () => S.loopKind === 'lick' && !S.pro && (S.lickCount || S.challenge != null) && !!S.loop && !S.jam;   // Normal only. Pro plays its passes back to back like a real jam
+// Pro: how many passes before playback stops by itself (0 = keep looping). One round of call & response = the coach's pass + yours.
+function passLimit() { if (S.jam) return S.jam.passes || 1; if (S.pro && S.lickOnce && S.loopKind === 'lick' && S.challenge == null) return S.lickMode === 'call' ? 2 : 1; return 0; }
+function passDone(seg) { const lim = passLimit(); if (!lim || seg.pass + 1 < lim) return false; const call = S.jam ? S.jam.mode === 'call' : S.lickMode === 'call'; return !call || seg.pass % 2 === 1; }
 function lickCounting() {
   if (!AU.playing || !AU.segs.length) return null;
   const now = AU.ctx.currentTime, s = AU.segs[AU.segs.length - 1];
   if (!s.count || now >= s.t0 || now < s.count.start) return null;
   return { k: Math.min(1, Math.floor((now - s.count.start) / s.count.beat)), seg: s };
 }
-function guideOnFor(pass) { if (S.jam) return false; if (S.loopKind !== 'lick') return true; if (S.lickMode === 'mine') return false; if (S.lickMode === 'call') return pass % 2 === 0; return true; }
+function guideOnFor(pass) { if (S.jam) return S.jam.mode === 'call' ? pass % 2 === 0 : false; if (S.loopKind !== 'lick') return true; if (S.lickMode === 'mine') return false; if (S.lickMode === 'call') return pass % 2 === 0; return true; }
 function newSeg(tick0, t0) {
   const endTick = S.loop ? S.loop.b : END;
   const seg = { t0, tick0, endTick, tEnd: t0 + (endTick - tick0) / tps(), pass: AU.pass++, sched: tick0 };
@@ -163,7 +166,7 @@ function sched() {
     if (horTick > seg.sched) { scheduleRange(seg, seg.sched, horTick); seg.sched = horTick; }
     if (horTick >= seg.endTick) {
       if (S.challenge != null) { if (now >= seg.tEnd) finishChallenge(); break; }                 // scored run = one pass, then the result
-      if (S.jam && seg.pass + 1 >= (S.jam.passes || 1)) { if (now >= seg.tEnd) stop(true); break; }   // Jam & Record: a fixed number of rounds, then save
+      if (passDone(seg)) { if (now >= seg.tEnd) stop(true); break; }                              // Pro "Once" and Jam & Record: stop after the round(s)
       if (S.loop) { const prevEnd = seg.tEnd, half = lickCountOn(), bs = BEAT / tps();
         if (half) for (let i = 0; i < 2; i++) click(prevEnd + i * bs, false);
         seg = newSeg(S.loop.a, prevEnd + (half ? 2 * bs : 0)); if (half) seg.count = { start: prevEnd, beat: bs }; continue; }
@@ -201,7 +204,7 @@ function startNow(opts) {
     const now = AU.ctx.currentTime + 0.08; let t0 = now;
     AU.countUntil = 0; let cnt = null;
     if (!opts.noCount && lickCountOn() && start === S.loop.a) { const bs = BEAT / tps(); for (let i = 0; i < 2; i++) click(now + i * bs, false); t0 = now + 2 * bs; cnt = { start: now, beat: bs }; }
-    else if ((S.countIn || opts.forceCount) && !opts.noCount) { $('countLbl').textContent = 'Count-in · ' + D.timeSig; const bs = BEAT / tps(); for (let i = 0; i < 4; i++) click(now + i * bs, i === 0); t0 = now + 4 * bs; AU.countStart = now; AU.countUntil = t0; AU.countBeat = bs; }
+    else if ((S.countIn || S.pro || opts.forceCount) && !opts.noCount) { /* Pro: always one bar of count-in at the start, never between passes */ $('countLbl').textContent = 'Count-in · ' + D.timeSig; const bs = BEAT / tps(); for (let i = 0; i < 4; i++) click(now + i * bs, i === 0); t0 = now + 4 * bs; AU.countStart = now; AU.countUntil = t0; AU.countBeat = bs; }
     AU.playing = true; AU.pass = 0; AU.segs = []; AU.pausedTick = start;
     const sg = newSeg(start, t0); if (cnt) sg.count = cnt; if (S.jam) jamArm(t0);
     clearInterval(AU.timer); AU.timer = setInterval(sched, 25); sched();
@@ -624,7 +627,6 @@ function onPickFile(e) {
 
 /* ---- All licks (…_Licks_All_Perf.wav) + Jam & Record on every lick (Pro view): the band loops the lick's bars, the mic records the player ---- */
 const TAKES = {};                              // recorded takes per track (each remembers its lick), kept in memory for this session (prototype)
-const jamRounds = (l) => Math.max(1, Math.min(4, Math.round(8 / (l.endBar - l.startBar + 1))));   // about 8 bars per take: 2-bar lick = 4 rounds, 4–5 bars = 2, whole solo = 1
 let REC = null;
 const lk = (i) => (i === D.licks.length ? D.allLick : D.licks[i]);
 const lkName = (i) => (i === D.licks.length ? 'All licks' : 'Lick ' + (i + 1));
@@ -633,12 +635,18 @@ function buildAllLick(p) {
   p.allLick = { id:'All', all:true, startBar:a.startBar, endBar:z.endBar, startTick:a.startTick, endTick:z.endTick, chords:[], fretLow:Math.min(...p.licks.map(l => l.fretLow)), fretHigh:Math.max(...p.licks.map(l => l.fretHigh)),
     techniques:[...new Set([].concat(...p.licks.map(l => l.techniques)))], level:'Full solo', gp:a.gp.replace(/Lick0\d/, 'Licks_All'), notes:[].concat(...p.licks.map(l => l.notes)) };
 }
-function jamStart(i) {                          // record over lick i: full count-in, then jamRounds() rounds of the lick's bars with the guide guitar muted
-  if (AU.playing) stop();
+function jamPasses(l, mode) {                    // Once = one round. Loop = keep going until the player stops (capped at about 3 minutes)
+  const per = mode === 'call' ? 2 : 1; if (S.lickOnce) return per;
+  return Math.max(1, Math.ceil(180 / ((l.endTick - l.startTick) / tps()) / per)) * per;
+}
+function jamStart(i, mode) {                    // record over lick i (Audio mode): one bar of count-in, then the lick's bars back to back.
+  if (S.mode !== 'audio') return toast('Jam & Record uses the studio stems — switch to Audio mode.');
+  if (AU.playing) stop();                       // 'call' = the original lick, then backing-only bars for the player · 'mine' = backing track only
   const go = (stream) => { const rec = REC = { stream, chunks:[], mr:null }, l = lk(i);
     if (stream) { try { rec.mr = new MediaRecorder(stream); rec.mr.ondataavailable = (e) => { if (e.data && e.data.size) rec.chunks.push(e.data); }; } catch (e) { rec.mr = null; } }
-    S.jam = { state:'rec', lick:i, passes:jamRounds(l) }; S.challenge = null; S.lick = i; S.fb = 'lick'; S.loopKind = 'lick'; S.loop = { a:l.startTick, b:l.endTick }; AU.pausedTick = l.startTick;
-    updFretboard(true); updTimeline(); updTransport(); updLicks(); play({ forceCount:true }); };
+    S.jam = { state:'rec', lick:i, mode, passes:jamPasses(l, mode) }; S.challenge = null; S.lick = i; S.lickMode = mode; S.fb = 'lick'; S.loopKind = 'lick'; S.loop = { a:l.startTick, b:l.endTick }; AU.pausedTick = l.startTick;
+    if (mode === 'call') S.ch.guide.mute = false; applyMix();
+    updFretboard(true); updTimeline(); updTransport(); updLicks(); updMixer(); play({ forceCount:true }); };
   const fail = () => { toast('Microphone not available — saving a silent demo take so you can see the flow.'); go(null); };
   if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } }).then(go).catch(fail); else fail();
 }
@@ -652,7 +660,7 @@ function jamFinish(j) {
   const r = REC, tid = D.id; REC = null; if (!r) return; clearTimeout(r.timer); const dur = r.started ? (performance.now() - r.started) / 1000 : 0;
   const done = (url) => { if (r.stream) r.stream.getTracks().forEach(t => t.stop());
     if (dur < 1) { updLicks(); return toast('Take discarded — it was shorter than a second.'); }
-    const list = TAKES[tid] = TAKES[tid] || [], tk = { id:'tk' + Date.now(), name:'Take ' + (list.filter(x => x.lick === j.lick).length + 1), url, dur, sim:!url, lick:j.lick, mode:S.mode, bpm:S.bpm, tr:S.tr }; list.unshift(tk); updLicks();
+    const list = TAKES[tid] = TAKES[tid] || [], tk = { id:'tk' + Date.now(), name:'Take ' + (list.filter(x => x.lick === j.lick).length + 1), url, dur, sim:!url, lick:j.lick, jmode:j.mode, mode:S.mode, bpm:S.bpm, tr:S.tr }; list.unshift(tk); updLicks();
     toast('Saved “' + tk.name + '” · ' + fmt(dur) + '. No score — this one is just for you.'); };
   if (r.mr && r.mr.state !== 'inactive') { r.mr.onstop = () => done(URL.createObjectURL(new Blob(r.chunks, { type:r.mr.mimeType || 'audio/webm' }))); r.mr.stop(); } else done(null);
 }
@@ -663,8 +671,11 @@ function lickCardPro(i, act) {                  // Pro view: Call & response + M
       <div class="m">${all ? D.licks.length + ' licks back to back, ' + l.notes.length + ' notes — practise the whole solo in one go.'
         : 'Over ' + l.chords.map((c, k) => chordAt(l.startBar - 1 + k).label).join(' · ') + ' — frets ' + lickFret(l.fretLow, l) + '–' + lickFret(l.fretHigh, l) + ' · ' + (l.techniques.join(', ') || '8th notes, no bends') + ' · ' + l.notes.length + ' notes'}</div>
       <div class="acts">${act(i, 'call')}${act(i, 'mine')}</div>
-      <button class="abtn rec sm ${rec ? 'on' : ''}" data-act="${rec ? 'play' : 'jamRec'}" data-v="${i}">${rec ? '■ Stop & save take' : '● Jam & Record'}</button>
-      ${takes.map(tk => `<div class="take"><button class="ib ${cur === tk.id ? 'on' : ''}" data-act="${cur === tk.id ? 'play' : 'takePlay'}" data-v="${tk.id}">${cur === tk.id ? '■' : '▶'}</button><div class="ri"><div class="tt">${esc(tk.name)}</div><div class="mm">${fmt(tk.dur)} · ${tk.mode === 'style' ? Math.round(tk.bpm) + ' BPM' : 'studio stems'}${tk.sim ? ' · silent demo take' : ''} · kept until you reload</div></div>
+      ${S.mode !== 'audio' ? '' : (rec ? `<button class="abtn rec sm on" data-act="play">■ Stop & save take</button>`
+        : (S.jamPick === i ? `<div class="jpick"><div class="acts"><button class="abtn rec sm" data-act="jamRec" data-v="${i}" data-m="call">● Call & response</button><button class="abtn rec sm" data-act="jamRec" data-v="${i}" data-m="mine">● My turn</button><button class="ib" data-act="jamPick" data-v="${i}" aria-label="Cancel">✕</button></div>
+          <div class="hudnote"><b>Call & response</b>: the original lick, then the same bars of backing track for your answer. <b>My turn</b>: backing track only. ${S.lickOnce ? 'Records one round.' : 'Records until you stop.'}</div></div>`
+        : `<button class="abtn rec sm" data-act="jamPick" data-v="${i}">● Jam & Record</button>`))}
+      ${S.mode !== 'audio' ? '' : takes.map(tk => `<div class="take"><button class="ib ${cur === tk.id ? 'on' : ''}" data-act="${cur === tk.id ? 'play' : 'takePlay'}" data-v="${tk.id}">${cur === tk.id ? '■' : '▶'}</button><div class="ri"><div class="tt">${esc(tk.name)}</div><div class="mm">${fmt(tk.dur)} · ${tk.jmode === 'call' ? 'Call & response' : 'My turn'}${tk.sim ? ' · silent demo take' : ''} · kept until you reload</div></div>
         <button class="ib" data-act="takeRename" data-v="${tk.id}" aria-label="Rename">✎</button><button class="ib" data-act="takeDel" data-v="${tk.id}" aria-label="Delete">✕</button></div>`).join('')}</div>`;
 }
 
@@ -826,12 +837,13 @@ function initSocial() {
     boardOpen: () => { S.ctx = { scope:'week' }; openSheet('board'); },
     boardScope: (d) => { S.ctx.scope = d.v; renderSheet(); },
     challenge: (d) => { closeSheet(); if (S.mode !== 'audio') setMode('audio'); S.challenge = +d.v; startLick(+d.v, 'mine'); toast('Scored run: play ' + lkName(+d.v).toLowerCase().replace('lick', 'Lick').replace('all Licks', 'all licks') + ' once after the count-in.'); },
-    jamRec: (d) => jamStart(+d.v),
+    jamRec: (d) => { S.jamPick = null; jamStart(+d.v, d.m === 'call' ? 'call' : 'mine'); },
+    jamPick: (d) => { S.jamPick = S.jamPick === +d.v ? null : +d.v; updLicks(); },
     takePlay: (d) => { const tk = (TAKES[D.id] || []).find(x => x.id === d.v); if (!tk) return; if (AU.playing) stop();          // replay a take with the band, at the mode / tempo / key it was recorded in
-      if (S.mode !== tk.mode) setMode(tk.mode); S.bpm = tk.bpm; S.tr = tk.tr; const l = lk(tk.lick), a = tk.url ? new Audio(tk.url) : null;
+      if (S.mode !== tk.mode) setMode(tk.mode); S.bpm = tk.bpm; S.tr = tk.tr; const l = lk(tk.lick), a = tk.url ? new Audio(tk.url) : null; S.lickMode = tk.jmode; if (tk.jmode === 'call') { S.ch.guide.mute = false; applyMix(); updMixer(); }
       S.challenge = null; S.lick = tk.lick; S.fb = 'lick'; S.loopKind = 'lick'; S.loop = { a:l.startTick, b:l.endTick }; AU.pausedTick = l.startTick;
       if (a) a.onended = () => { if (S.jam && S.jam.take === tk.id) stop(true); };
-      S.jam = { state:'play', take:tk.id, audio:a, lick:tk.lick, passes:Math.max(1, Math.ceil(tk.dur / ((l.endTick - l.startTick) / tps()) - 0.02)) };
+      S.jam = { state:'play', take:tk.id, audio:a, lick:tk.lick, mode:tk.jmode, passes:Math.max(1, Math.ceil(tk.dur / ((l.endTick - l.startTick) / tps()) - 0.02)) };
       updHeader(); updFretboard(true); updTimeline(); updTransport(); updLicks(); play({ noCount:true }); if (!tk.url) toast('Silent demo take — only the band plays.'); },
     takeRename: (d) => { const tk = (TAKES[D.id] || []).find(x => x.id === d.v); if (!tk) return; S.ctx = { id:tk.id, name:tk.name }; openSheet('takeName'); },
     takeSave: () => { const tk = (TAKES[D.id] || []).find(x => x.id === S.ctx.id); if (tk) tk.name = (S.ctx.name || '').trim() || tk.name; closeSheet(); updLicks(); },
@@ -1038,7 +1050,7 @@ function stageTick(tick, cnt, bar) {
   const now = performance.now(), lickOn = S.loopKind === 'lick' && !!D.licks.length, seg = AU.playing && AU.segs.length ? (cnt ? cnt.seg : curSeg()) : null;
   let who = '', badge = '', bcls = '';
   if (seg) {
-    if (S.jam) { who = 'you'; const rec = S.jam.state === 'rec'; badge = (rec ? '● REC' : '▶ YOUR TAKE') + ' · round ' + Math.min(S.jam.passes || 1, seg.pass + 1) + ' / ' + (S.jam.passes || 1); bcls = rec ? 'rec' : 'l'; }
+    if (S.jam) { who = 'you'; const rec = S.jam.state === 'rec'; const cl = S.jam.mode === 'call'; badge = (rec ? '● REC' : '▶ YOUR TAKE') + (cl ? (seg.guideOn ? ' · original lick' : ' · your bars') : '') + ' · round ' + ((cl ? seg.pass >> 1 : seg.pass) + 1); bcls = rec ? 'rec' : 'l'; }
     else if (lickOn) { const sc = S.challenge != null, mine = sc || S.lickMode === 'mine' || (S.lickMode === 'call' && !seg.guideOn);
       who = mine ? 'you' : 'coach'; bcls = cnt ? 'c' : (sc ? 's' : (mine ? 'y' : 'l'));
       badge = (sc ? '🏆 SCORED RUN' : (mine ? '🎸 YOUR TURN' : '👂 LISTEN')) + (S.lickMode === 'call' && !sc ? ' · round ' + ((seg.pass >> 1) + 1) : '') + (cnt ? ' · ' + (cnt.k ? 4 : 3) : ''); }
@@ -1177,7 +1189,7 @@ function updTransport() {
     </div>` + (!S.pro ? (D.own ? '' : speedRow()) : `
     <div class="opt"><div style="display:flex;gap:8px">
         <button class="tog ${S.metro ? 'on' : ''}" data-act="metro">${icon('metronome_icon', 14)}Metronome</button>
-        <button class="tog ${S.countIn ? 'on' : ''}" data-act="countIn">Count-in</button></div>
+</div>
       <div style="display:flex;align-items:center;gap:8px;${st ? '' : 'opacity:.45'}"><span style="font-size:12px;color:rgba(255,255,255,.6)">Key</span>
         <button class="step" data-act="${st ? 'tr' : 'needStyle'}" data-v="-1">−</button><span style="min-width:34px;text-align:center;font-size:13px;font-weight:700;color:${S.tr ? 'var(--green)' : '#fff'}">${NOTE[keyPc()]}${S.tr ? ' (' + (S.tr > 0 ? '+' : '') + S.tr + ')' : ''}</span><button class="step" data-act="${st ? 'tr' : 'needStyle'}" data-v="1">+</button></div></div>`);
 }
@@ -1211,9 +1223,9 @@ function updLicks() {
       D.licks.map((l, i) => lickCardSimple(i, act, best, i === first)).join('') + lickCardSimple(D.licks.length, act, best, false);
     return; }
   el.innerHTML = `<div class="lbl">🎸 Guide licks <small>${S.mode === 'audio' ? 'real guitar · LED + tab' : 'synth guide from tab · LED + tab'}</small></div>` +
-    `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="tog ${S.lickCount ? 'on' : ''}" data-act="lickCount">Count-in ½ bar</button><button class="tog ${S.metro ? 'on' : ''}" data-act="metro">${icon('metronome_icon', 14)}Metronome</button>` +
+    `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><div class="seg"><button class="${S.lickOnce ? '' : 'on'}" data-act="passMode" data-v="loop">${icon('loop_icon', 13)} Loop</button><button class="${S.lickOnce ? 'on' : ''}" data-act="passMode" data-v="once">1× Once</button></div><button class="tog ${S.metro ? 'on' : ''}" data-act="metro">${icon('metronome_icon', 14)}Metronome</button>` +
     (S.loopKind === 'lick' ? '<button class="chip" data-act="exitLick">✕ Exit lick practice</button>' : '') + '</div>' +
-    '<div class="hudnote">Pro is free practice: trade phrases, play alone, record your jam. Scores and the leaderboard are in Normal view.</div>' +
+    '<div class="hudnote">Pro is free practice: one bar of count-in at the start, then the rounds run back to back. Scores and the leaderboard are in Normal view.</div>' +
     D.licks.map((l, i) => lickCardPro(i, act)).join('') + lickCardPro(D.licks.length, act);
 }
 const STEPCAP = { listen:'<b>Listen</b> — the coach plays. Watch the lights and the tab.', call:'<b>Copy me</b> — the coach plays one round, then it is your turn.', mine:'Tap <b>Listen</b> or <b>Copy me</b> to practise again, or play for score.' };
@@ -1235,7 +1247,7 @@ function updMore() {                            // Normal view only: one door to
 const viewMode = (m) => (S.pro ? (m === 'listen' ? 'call' : m) : (m === 'mine' ? 'call' : m));   // Normal: Listen / Copy me · Pro: Call & response / My turn
 function setView(pro, quiet) {
   S.pro = !!pro; try { localStorage.setItem('ljpwt.view', S.pro ? 'pro' : 'simple'); } catch (e) {}
-  if (S.jam) stop();                                                             // Jam & Record lives in Pro
+  if (S.jam) stop(); S.jamPick = null;                                           // Jam & Record lives in Pro
   if (S.pro) S.challenge = null;                                                 // scored runs live in Normal
   S.lickMode = viewMode(S.lickMode);
   updHeader(); updTransport(); updLicks(); updBoard(); updMixer(); updMore();
@@ -1389,6 +1401,7 @@ const ACT = {
   viewToggle: () => setView(!S.pro),
   simpleSpeed: (d) => setSpeed(d.v),
   mixToggle: () => { S.mixOpen = !S.mixOpen; updMixer(); },
+  passMode: (d) => { S.lickOnce = d.v === 'once'; updLicks(); toast(S.lickOnce ? 'Once: one round, then it stops.' : 'Loop: rounds repeat back to back until you stop.'); },
   exitLick: () => { S.challenge = null; S.ch.guide.mute = true; applyMix(); S.fb = 'scale'; updFretboard(true); updMixer(); setLoop(null); },
   mute: (d) => { S.ch[d.v].mute = !S.ch[d.v].mute; applyMix(); updMixer(); }, solo: (d) => { S.ch[d.v].solo = !S.ch[d.v].solo; applyMix(); updMixer(); },
   sKey: (d) => { S.sKey = +d.v; renderScaleTab(); }, sType: (d) => { S.sType = d.v; renderScaleTab(); },
@@ -1436,8 +1449,8 @@ const FEATURES = [
 ];
 FEATURES.push(['F13', 'โปรไฟล์ + Scored run + Leaderboard ต่อแทร็ก', 'ผู้ใช้มีโปรไฟล์ (ชื่อที่แสดง + Avatar เป็นตัวละคร Litejam Universe หรือรูป/GIF ของตัวเอง) แต่ละ lick มีปุ่ม Scored run: นับเข้าครึ่งบาร์ เล่น 1 รอบโดยไม่มีเสียงไกด์ แล้วขึ้นผลคะแนน (คะแนน, ดาว, % โน้ตที่โดน, ความแม่นจังหวะ, อันดับที่เปลี่ยน) คะแนนของแทร็ก = คะแนนดีที่สุดของแต่ละ lick รวมกัน Leaderboard ของแต่ละ backing track มีแท็บ This week / All time / Friends โพเดียม 3 อันดับแรกพร้อม Avatar และแถวของผู้ใช้ปักไว้เสมอ หน้ารายการเพลงแสดงคะแนนดีที่สุดของผู้ใช้ด้วย Scored run และ Leaderboard อยู่ใน Normal view เท่านั้น ส่วน Pro เป็นการฝึกอิสระที่ไม่มีคะแนน',
   ['04_GUIDE_LICKS + 05_TABS (โน้ตเฉลยของ lick)', 'บัญชีผู้ใช้'], [['ดีไซน์เผื่ออนาคต', 'new', 'คะแนนและรายชื่อใน prototype เป็นข้อมูลจำลอง ของจริงต้องมี (1) การตรวจจับโน้ตจากกีตาร์ (2) ระบบบัญชีและ backend เก็บคะแนน กติกาที่วางไว้: นับเฉพาะ Audio mode ที่ tempo เดิม เพื่อให้ทุกคนเล่นโจทย์เดียวกัน และเพลงที่อัปโหลดเองไม่มี leaderboard']]]);
-FEATURES.push(['F14', 'All licks + Jam & Record ในทุก lick (Pro view)', 'การ์ด All licks รวมทุก lick ของแทร็กเป็นโซโลเดียว ฝึกได้เหมือน lick เดี่ยว ใน Pro view ทุกการ์ด (Lick 1–3 และ All licks) มีปุ่มแดง ● Jam & Record: นับเข้า 1 บาร์ แล้ววงเล่นวนช่วงบาร์ของ lick นั้นรวมประมาณ 8 บาร์ (lick 2 บาร์ = 4 รอบ, 4–5 บาร์ = 2 รอบ, All licks = 1 รอบ) โดยปิดเสียงกีตาร์ไกด์ ระหว่างนั้นอัดเสียงผู้ใช้ผ่านไมโครโฟน กดหยุดก่อนครบก็ได้ Take ถูกเก็บไว้ใต้ lick ที่อัด เปิดฟังพร้อมวงได้ที่โหมด tempo และคีย์เดียวกับตอนอัด เปลี่ยนชื่อหรือลบได้ ไม่มีคะแนน อัดได้ทั้ง Audio mode และ Style mode (ช้าลงหรือเปลี่ยนคีย์ก่อนอัดได้) การ์ด Jam & Record แบบเดิมที่อัดทับไฟล์ Licks_Demo ทั้งเพลงถูกตัดออกแล้ว',
-  ['01_AUDIO › stems', '02_MIDI + 03_SAMPLES', '04_GUIDE_LICKS › Licks_All_Perf.wav'], [['LJ001 + LJ002', 'ok', 'อัดได้ทุก lick และ All licks'], ['prototype', 'new', 'Take เก็บไว้จนกว่าจะรีเฟรชหน้า · ต้องอนุญาตไมโครโฟน ถ้าไม่มีไมค์จะบันทึกเป็น take เงียบเพื่อให้เห็นขั้นตอน · ไฟล์ Licks_Demo.wav ไม่ได้ใช้แล้วแต่ยังฝังอยู่ใน media']]]);
+FEATURES.push(['F14', 'All licks + Jam & Record ในทุก lick (Pro view · Audio mode)', 'การ์ด All licks รวมทุก lick ของแทร็กเป็นโซโลเดียว ฝึกได้เหมือน lick เดี่ยว ใน Pro view ที่ Audio mode ทุกการ์ด (Lick 1–3 และ All licks) มีปุ่มแดง ● Jam & Record แตะแล้วเลือกแบบการอัด 2 แบบ: Call & response = เล่น lick ต้นฉบับ 1 รอบ ตามด้วย backing track ช่วงบาร์เดียวกันให้ผู้ใช้ตอบ สลับกันไป, My turn = backing track อย่างเดียว ทั้งสองแบบนับเข้า 1 บาร์ครั้งเดียวตอนเริ่ม แล้วเล่นต่อกันโดยไม่มี count-in คั่น ตัวเลือก Loop / Once ใช้กับการอัดด้วย: Once อัด 1 รอบแล้วบันทึกเอง, Loop อัดจนกว่าจะกดหยุด (จำกัดประมาณ 3 นาที) Take เก็บไว้ใต้ lick ที่อัด เปิดฟังพร้อมวงแบบเดียวกับตอนอัดได้ เปลี่ยนชื่อหรือลบได้ ไม่มีคะแนน Style mode ไม่มี Jam & Record การ์ด Jam & Record แบบเดิมที่อัดทับไฟล์ Licks_Demo ทั้งเพลงถูกตัดออกแล้ว',
+  ['01_AUDIO › stems', '04_GUIDE_LICKS › Licks_All_Perf.wav'], [['LJ001 + LJ002', 'ok', 'อัดได้ทุก lick และ All licks ใน Audio mode'], ['prototype', 'new', 'Take เก็บไว้จนกว่าจะรีเฟรชหน้า · ต้องอนุญาตไมโครโฟน ถ้าไม่มีไมค์จะบันทึกเป็น take เงียบเพื่อให้เห็นขั้นตอน · ไฟล์ Licks_Demo.wav ไม่ได้ใช้แล้วแต่ยังฝังอยู่ใน media']]]);
 FEATURES.push(['F15', 'เชื่อมกีตาร์จริงผ่าน BLE — ไฟ LED ตามหน้าจอ', 'ปุ่ม Connect ที่แถบบนสุดเชื่อมกีตาร์ Litejam ผ่าน Web Bluetooth เมื่อเชื่อมแล้วไฟบนเฟรตบอร์ดจริงจะตามหน้าจอทุกโหมด: สเกล (root แดง, โน้ตสเกลน้ำเงิน, Target notes ขาว), Chord tones, และ Lick ที่ไฟเขียวคือโน้ตที่ต้องเล่นตอนนี้ ไฟเหลืองคือโน้ตถัดไป รวมถึงแท็บ Scale เดิม มีหน้าสถานะแสดงชื่อกีตาร์ แบตเตอรี่ จำนวนเฟรมที่ส่ง ปุ่มทดสอบไฟ และปุ่มปิดไฟ',
   ['โปรโตคอลเดียวกับแอป: service 00EE › characteristic EE04'], [['ต้องทดสอบกับกีตาร์จริง', 'new', 'เขียนตามรูปแบบเฟรมของแอป Litejam และทดสอบกับอุปกรณ์จำลองแล้ว แต่ยังไม่ได้ลองกับกีตาร์จริง · ใช้ได้ใน Chrome หรือ Edge บนคอมพิวเตอร์และ Android ผ่าน https หรือ localhost · iPhone และ iPad เชื่อมไม่ได้ · ต้องปิดแอป Litejam บนมือถือก่อน']]]);
 FEATURES.push(['F16', 'เวที + วงเป็นตัวละคร Litejam Universe', 'ส่วนบนของ player เป็นเวที สีฉากตาม Style ของแทร็ก โค้ชประจำ Style ยืนซ้าย ตัวละครของผู้ใช้ยืนขวา (ใช้ตัวละครจากโปรไฟล์ แตะเพื่อเปลี่ยน) คอร์ด NOW / NEXT และจุดจังหวะยังอยู่แถวเดิมเหนือเวที ตัวใหญ่ชัดเหมือนก่อน ตอนเล่นแสงไฟส่องคนที่กำลังเล่นและตัวละครดีดตามจังหวะ 2 บีตต่อรอบ แตะโค้ชเพื่อขอคำแนะนำ เช่น โน้ตเป้าหมายของคอร์ดตอนนั้น ส่วน Mixer กลับมาเป็นแถบ M / S / volume ต่อ stem เหมือนเวอร์ชันธรรมดา (เลิกใช้ “The band” ที่เป็นตัวละคร) และพับเก็บไว้ใต้หัวข้อ Mixer แตะหัวข้อเพื่อกางออก',
@@ -1446,7 +1459,7 @@ FEATURES.push(['F17', 'Call & response กับโค้ช', 'ตอนฝึ�
   ['05_TABS › .gp (string, fret, bend, vibrato)', '04_GUIDE_LICKS › Perf.wav', 'Chord_Progression'], [['LJ001 + LJ002', 'ok', 'ใช้ได้กับทุก lick และ All licks ทั้ง Listen, Call & response และ My turn']]]);
 FEATURES.push(['F18', 'YOUR TURN — ผลตอบรับรายโน้ต', 'ตอนผู้ใช้เล่น (Call & response, My turn, Scored run) แต่ละโน้ตขึ้น PERFECT / GOOD / MISS พร้อมแต้ม มี COMBO แถบจุดรายโน้ตใต้เวที และ Power meter ที่เต็มแล้วตัวละครทำท่า Ultimate โค้ชชมเมื่อ bend หรือ vibrato ตรง ใน Scored run มี “Ghost” คือผู้เล่นอันดับถัดไปบน leaderboard ให้ไล่ตาม และคะแนนสรุปท้ายรอบคิดจากผลรายโน้ตชุดเดียวกับที่เห็นบนเวที',
   ['05_TABS (โน้ตเฉลย)', 'Litejam Universe › fx-charge / fx-charged-bolt'], [['ผลตัดสินเป็นการจำลอง', 'new', 'prototype สุ่มผลของแต่ละโน้ต เพราะยังไม่มี note detection แอปจริงต้องฟังเสียงกีตาร์หรืออ่านจากกีตาร์ Litejam'], ['กติกาเป็นข้อเสนอ', 'new', 'lick ละ 1,000 แต้ม · GOOD ได้ 60% · Power เต็มแล้วได้ท่า Ultimate อย่างเดียว ยังไม่บวกแต้ม']]]);
-FEATURES.push(['F19', 'Normal view / Pro view — สองแบบที่ต่างกันจริง', 'หน้า player มี 2 มุมมอง สลับด้วยสวิตช์ “Pro” ข้างแถบโหมด ค่าเริ่มต้นคือ Normal Normal = เล่นตามโค้ชแล้วเก็บคะแนน: แต่ละ lick มีปุ่มเขียวปุ่มเดียวคือ ▶ Practise การ์ดที่กำลังฝึกกางออกเป็น 👂 Listen (ฟ้า) กับ 🔁 Copy me (ฟ้าไล่เขียว) และปุ่มทอง 🏆 Play for score มี Leaderboard แถวเดียว และแถว Speed 3 ระดับ 🐢 Slow (70%) · Medium (85%) · ⚡ Full ที่สลับไป Style mode ให้เอง Normal ไม่มี My turn Pro = ฝึกอิสระ ไม่มีคะแนนและไม่มี Leaderboard: แต่ละ lick เหลือ ⇄ Call & response กับ 🎸 My turn และปุ่มแดง ● Jam & Record ในทุก lick พร้อม Audio / Style (เปลี่ยน tempo และคีย์) กับตัวเลือก count-in Mixer แบบพับได้มีทั้งสองมุมมอง สีปุ่มมีความหมายเดียวกันตลอด: เขียว = เล่น, ฟ้า = ฟัง, ทอง = คะแนน, แดง = อัดเสียง', ['ไม่ใช้ asset เพิ่ม'], [['prototype', 'new', 'จำมุมมองล่าสุดไว้ในเครื่อง · ปุ่ม “ลองดู” ของ F8, F14, F18 เปิด Pro ให้เอง และ F13 กลับมา Normal ให้เอง'], ['LJ002', 'wait', 'Slow / Medium เหลือแค่กลองกับเบส เพราะยังไม่มี MIDI + samples ของ harmony']]]);
+FEATURES.push(['F19', 'Normal view / Pro view — สองแบบที่ต่างกันจริง', 'หน้า player มี 2 มุมมอง สลับด้วยสวิตช์ “Pro” ข้างแถบโหมด ค่าเริ่มต้นคือ Normal Normal = เล่นตามโค้ชแล้วเก็บคะแนน: แต่ละ lick มีปุ่มเขียวปุ่มเดียวคือ ▶ Practise การ์ดที่กำลังฝึกกางออกเป็น 👂 Listen (ฟ้า) กับ 🔁 Copy me (ฟ้าไล่เขียว) และปุ่มทอง 🏆 Play for score มี Leaderboard แถวเดียว และแถว Speed 3 ระดับ 🐢 Slow (70%) · Medium (85%) · ⚡ Full ที่สลับไป Style mode ให้เอง Normal ไม่มี My turn Pro = ฝึกอิสระ ไม่มีคะแนนและไม่มี Leaderboard: แต่ละ lick เหลือ ⇄ Call & response กับ 🎸 My turn และปุ่มแดง ● Jam & Record ในทุก lick (เฉพาะ Audio mode) พร้อม Audio / Style (เปลี่ยน tempo และคีย์) Pro นับเข้า 1 บาร์เฉพาะตอนเริ่มเล่นเสมอ ไม่มี count-in คั่นระหว่างรอบ แต่ละรอบเล่นต่อกันเหมือนแจมจริง และเลือกได้ว่า Loop (วนไปเรื่อย ๆ) หรือ Once (รอบเดียวแล้วหยุด) Mixer แบบพับได้มีทั้งสองมุมมอง สีปุ่มมีความหมายเดียวกันตลอด: เขียว = เล่น, ฟ้า = ฟัง, ทอง = คะแนน, แดง = อัดเสียง', ['ไม่ใช้ asset เพิ่ม'], [['prototype', 'new', 'จำมุมมองล่าสุดไว้ในเครื่อง · ปุ่ม “ลองดู” ของ F8, F14, F18 เปิด Pro ให้เอง และ F13 กลับมา Normal ให้เอง'], ['LJ002', 'wait', 'Slow / Medium เหลือแค่กลองกับเบส เพราะยังไม่มี MIDI + samples ของ harmony']]]);
 const OWN_ROWS = [
   ['เล่นเสียง + Mixer', 'stem จริงจาก producer + กีตาร์ไกด์', 'stem ที่ AI แยก (Drums / Bass / Other) คุณภาพขึ้นกับไฟล์'],
   ['Chord timeline', 'นักดนตรีตรวจแล้ว', 'AI ถอด แก้เองได้ทีละบาร์หรือทุกบาร์ที่เป็นคอร์ดเดียวกัน'],
