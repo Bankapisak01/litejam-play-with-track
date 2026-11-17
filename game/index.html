@@ -313,19 +313,22 @@ input[type=range]::-moz-range-thumb { width:16px; height:16px; border-radius:50%
 .dpane { position:relative; flex:1; min-width:0; overflow:hidden; display:flex; align-items:flex-end; justify-content:center; background:#111; }
 .dpane video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; } .dpane video.mirror { transform:scaleX(-1); }
 .duet:has(.dpane.art) { height:320px; }
-.dpane.art { border-left:2px solid #000; } .dpane.art .sp { position:relative; z-index:1; width:300px; height:300px; margin-bottom:-74px; filter:brightness(.72) saturate(.8); transition:filter .2s; } .dpane.art.live .sp { filter:none; }
+.duet { gap:2px; } .duet.swap .dpane.art { order:2; } .dpane.art .sp { position:relative; z-index:1; width:300px; height:300px; margin-bottom:-74px; filter:brightness(.72) saturate(.8); transition:filter .2s; } .dpane.art.live .sp { filter:none; }
 .room { position:absolute; inset:0; background:linear-gradient(180deg,#4a1f17 0,#5d2a1d 30%,#2c2927 30%,#3b3632 72%,#221f1d 100%); overflow:hidden; }
 .room::before { content:''; position:absolute; left:-20%; right:-20%; top:0; height:30%; background:repeating-linear-gradient(104deg,rgba(0,0,0,0) 0 40px,rgba(255,244,228,.9) 40px 48px,rgba(0,0,0,0) 48px 58px,rgba(20,20,24,.55) 58px 64px); }
 .room::after { content:''; position:absolute; inset:0; background:radial-gradient(ellipse at 50% 38%,rgba(255,180,120,.16),rgba(0,0,0,0) 46%,rgba(0,0,0,.5) 100%); }
 .room i { position:absolute; top:38%; width:26px; height:34px; border:2px solid #17120f; background:#6b6258; } .room i:nth-child(1) { left:10%; } .room i:nth-child(2) { left:26%; top:41%; width:20px; height:26px; } .room i:nth-child(3) { right:9%; top:40%; }
 .room b { position:absolute; left:-6%; right:38%; bottom:0; height:30%; background:#8a7c6c; border-radius:26px 26px 0 0; box-shadow:inset 0 10px 0 rgba(255,255,255,.08); }
-.dchip { position:absolute; left:8px; top:8px; font-size:10.5px; font-weight:700; background:rgba(0,0,0,.62); border-radius:5px; padding:3px 7px; z-index:2; white-space:nowrap; } .dpane.art.live .dchip { background:var(--blue); color:#00111f; }
+.dchip { position:absolute; left:8px; top:36px; font-size:10.5px; font-weight:700; background:rgba(0,0,0,.62); border-radius:5px; padding:3px 7px; z-index:2; white-space:nowrap; } .dpane.art.live .dchip { background:var(--blue); color:#00111f; }
 .dprog { position:absolute; left:0; right:0; bottom:0; height:3px; background:rgba(255,255,255,.18); z-index:2; } .dprog u { display:block; height:100%; width:0; background:var(--blue); }
 .dtag { position:absolute; left:8px; bottom:8px; font-size:11px; font-weight:700; background:rgba(0,0,0,.62); border-radius:5px; padding:3px 7px; z-index:2; white-space:nowrap; }
-.dph { position:absolute; right:8px; top:34px; font-size:9.5px; color:rgba(255,255,255,.7); background:rgba(0,0,0,.5); border-radius:4px; padding:2px 6px; z-index:2; }
+.dph { position:absolute; right:8px; bottom:10px; top:auto; font-size:9.5px; color:rgba(255,255,255,.7); background:rgba(0,0,0,.5); border-radius:4px; padding:2px 6px; z-index:2; }
 a.ib { display:flex; align-items:center; justify-content:center; text-decoration:none; } .rlbl { font-size:12px; font-weight:700; color:#ff7b7b; }
 .popt { display:flex; gap:8px; flex-wrap:wrap; } .popt .seg { height:32px; flex:1; min-width:0; } .popt .seg button { flex:1; font-size:11.5px; padding:0 6px; }
 button.bestb.tk { color:#ff9a9a; background:rgba(255,32,32,.12); border-radius:6px; padding:4px 8px; }
+.dswap { position:absolute; right:8px; top:8px; z-index:4; width:30px; height:30px; border-radius:50%; background:rgba(0,0,0,.62); border:1px solid rgba(255,255,255,.3); font-size:14px; }
+.ib.shr { color:var(--green); font-weight:700; } a.cta { display:flex; align-items:center; justify-content:center; text-decoration:none; }
+.shprev { width:100%; border-radius:8px; background:#000; } video.shprev { max-height:300px; } a.chip { text-decoration:none; }
 .abtn.rec.armed { background:var(--red); color:#fff; border-color:var(--red); } .lick .hudnote b { color:rgba(255,255,255,.75); }
 .mixtog { width:100%; text-align:left; background:var(--panel); border-radius:8px; padding:10px 12px; } .mixtog i { font-style:normal; color:rgba(255,255,255,.6); font-size:13px; width:14px; text-align:center; }
 .abtn.score.off { opacity:.75; border-style:dashed; font-weight:400; }
@@ -354,6 +357,6 @@ button.bestb.tk { color:#ff9a9a; background:rgba(255,32,32,.12); border-radius:6
 <script src="media/lj_data.js"></script>
 <script src="media/lj001_media.js"></script>
 <script src="media/lj002_media.js"></script>
-<script src="app.js?v=20261118b"></script>
+<script src="app.js?v=20261118c"></script>
 </body>
 </html>

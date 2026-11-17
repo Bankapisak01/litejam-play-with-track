@@ -641,12 +641,12 @@ function jamPasses(l, mode) { return (S.lickOnce ? 1 : ROUNDS_MAX) * (mode === '
 function jamStart(i, mode) {                    // record over lick i (Audio mode): one bar of count-in, then the lick's bars back to back.
   if (S.mode !== 'audio') return toast('Jam & Record uses the studio stems — switch to Audio mode.');
   if (AU.playing) stop();                       // 'call' = the original lick, then backing-only bars for the player · 'mine' = backing track only
-  const go = (stream, vid) => { const rec = REC = { stream, chunks:[], mr:null }, l = lk(i), video = !!(stream && vid);
+  const go = (stream, vid) => { const rec = REC = { stream, chunks:[], mr:null, schunks:[], smr:null }, l = lk(i), video = !!(stream && vid);
     if (stream) { try { rec.mr = new MediaRecorder(stream); rec.mr.ondataavailable = (e) => { if (e.data && e.data.size) rec.chunks.push(e.data); }; } catch (e) { rec.mr = null; } }
     S.jam = { state:'rec', lick:i, mode, passes:jamPasses(l, mode), video, duet:video && mode === 'call' && !!DUET[D.id] };
     S.challenge = null; S.lick = i; S.lickMode = mode; S.fb = 'lick'; S.loopKind = 'lick'; S.loop = { a:l.startTick, b:l.endTick }; AU.pausedTick = l.startTick;
     if (mode === 'call') S.ch.guide.mute = false; applyMix();
-    updFretboard(true); updTimeline(); updTransport(); updLicks(); updMixer(); updDuet(); if (video) scrollToId('nowbar'); play({ forceCount:true }); };
+    updFretboard(true); updTimeline(); updTransport(); updLicks(); updMixer(); updDuet(); if (stream) shareRecSetup(rec, video); if (video) scrollToId('nowbar'); play({ forceCount:true }); };
   const fail = () => { toast('Microphone not available — saving a silent demo take so you can see the flow.'); go(null, false); };
   const AUD = { echoCancellation:false, noiseSuppression:false, autoGainControl:false }, md = navigator.mediaDevices;
   if (!(md && md.getUserMedia)) return fail();
@@ -660,29 +660,83 @@ function updDuet() {
   const j = S.jam, on = !!(j && j.video);
   el.style.display = on ? '' : 'none'; if (stg) stg.style.display = on ? 'none' : '';
   if (!on) { el.innerHTML = ''; return; }
-  const c = ST.cast || cast(), cat = CAT[trackCat()] || CAT.Upload; ST.lb = '~';
-  el.innerHTML = `<div class="dpane"><video id="duetVid" playsinline ${j.state === 'rec' ? 'muted autoplay class="mirror"' : ''}></video><span class="dtag">You · ${esc(U.profile.name)}</span></div>` +
-    (j.duet ? `<div class="dpane art"><div class="room"><i></i><i></i><i></i><b></b></div><div class="sp" id="duetSp" style="background-image:url('assets/chars/${c.coach}_idle.png')"></div>
+  const c = ST.cast || cast(); ST.lb = '~';
+  el.className = 'duet' + (S.artRight ? ' swap' : '');            // the artist is on the left by default; ⇄ swaps the halves
+  el.innerHTML = (j.duet ? `<div class="dpane art"><div class="room"><i></i><i></i><i></i><b></b></div><div class="sp" id="duetSp" style="background-image:url('assets/chars/${c.coach}_idle.png')"></div>
       <span class="dchip" id="duetChip">👂 Listening</span><span class="dtag">Artist · ${esc(CHARMAP[c.coach].name)}</span><span class="dph">MOCKUP · artist video</span><u class="dprog"><u id="duetProg"></u></u></div>` : '') +
-    `<div class="sbadge" id="duetBadge"></div>`;
+    `<div class="dpane me"><video id="duetVid" playsinline ${j.state === 'rec' ? 'muted autoplay class="mirror"' : ''}></video><span class="dtag">You · ${esc(U.profile.name)}</span></div>` +
+    (j.duet ? '<button class="dswap" data-act="duetSwap" aria-label="Swap sides">⇄</button>' : '') + `<div class="sbadge" id="duetBadge"></div>`;
   const v = $('duetVid');
   if (j.state === 'rec') { if (REC && REC.stream) { try { v.srcObject = REC.stream; } catch (e) {} } }
   else { v.src = j.url; j.audio = v; v.onended = () => { if (S.jam === j) stop(true); }; }
 }
+/* ---- the share file: a second recorder captures what a viewer should get — the backing track mixed with the player's guitar and,
+        for video takes, a composed 9:16 frame (title bar, the duet halves in the same order as on screen, footer). The first recorder
+        keeps the raw microphone / camera for the in-app replay that stays in sync with the band and the LEDs. ---- */
+function pickMime(video) {
+  const c = video ? ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'] : ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
+  return c.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch (e) { return false; } }) || '';
+}
+function shareRecSetup(rec, video) {
+  try {
+    const ctx = AU.ctx, dest = rec.sdest = ctx.createMediaStreamDestination(); AU.master.connect(dest);
+    const at = rec.stream.getAudioTracks(); if (at.length) { rec.micSrc = ctx.createMediaStreamSource(new MediaStream(at)); rec.micG = ctx.createGain(); rec.micG.gain.value = 1.4; rec.micSrc.connect(rec.micG); rec.micG.connect(dest); }
+    let out = dest.stream;
+    if (video) { const cv = rec.canvas = document.createElement('canvas'); cv.width = 720; cv.height = 1280; rec.vtrack = cv.captureStream(30).getVideoTracks()[0]; out = new MediaStream([rec.vtrack, dest.stream.getAudioTracks()[0]]); composeLoop(rec); }
+    const mime = pickMime(video); rec.smr = new MediaRecorder(out, mime ? { mimeType:mime } : undefined);
+    rec.smr.ondataavailable = (e) => { if (e.data && e.data.size) rec.schunks.push(e.data); };
+  } catch (e) { rec.smr = null; }
+}
+function composeLoop(rec) {                     // draws the share frame for as long as this take is recording
+  const cv = rec.canvas, x = cv.getContext('2d'), W = 720, H = 1280, top = 150, ph = 980, j = S.jam, c = ST.cast || cast();
+  const logo = new Image(); logo.src = 'assets/logo.png'; const atl = {}; ['idle', 'attack'].forEach(a => { const im = new Image(); im.src = `assets/chars/${c.coach}_${a}.png`; atl[a] = im; });
+  const cover = (src, sw, sh, dx, dy, dw, dh) => { const k = Math.max(dw / sw, dh / sh), w = dw / k, h = dh / k; x.drawImage(src, (sw - w) / 2, (sh - h) / 2, w, h, dx, dy, dw, dh); };
+  const tag = (t, tx, ty) => { x.font = 'bold 22px Lato, sans-serif'; const tw = x.measureText(t).width + 20; x.fillStyle = 'rgba(0,0,0,.62)'; x.fillRect(tx, ty - 26, tw, 36); x.fillStyle = '#fff'; x.textAlign = 'left'; x.fillText(t, tx + 10, ty); };
+  const sub = lkName(j.lick) + ' · ' + (j.mode === 'call' ? 'Call & response' : 'My turn');
+  const draw = () => { if (REC !== rec) return;
+    const vid = $('duetVid'), duet = !!j.duet, pw = duet ? W / 2 : W, artX = S.artRight ? pw : 0, meX = duet ? (S.artRight ? 0 : pw) : 0;
+    const seg = AU.playing && AU.segs.length ? curSeg() : null, live = !!seg && seg.guideOn && AU.ctx.currentTime >= seg.t0;
+    x.fillStyle = '#111'; x.fillRect(0, 0, W, H);
+    if (logo.complete && logo.naturalWidth) x.drawImage(logo, 28, 22, logo.naturalWidth * 56 / logo.naturalHeight, 56);
+    x.textAlign = 'left'; x.fillStyle = '#fff'; x.font = 'bold 30px Lato, sans-serif'; x.fillText(D.title, 28, 124);
+    x.textAlign = 'right'; x.fillStyle = '#ADFE00'; x.font = 'bold 24px Lato, sans-serif'; x.fillText(sub, W - 28, 124);
+    x.fillStyle = '#222'; x.fillRect(meX, top, pw, ph);
+    if (vid && vid.videoWidth) cover(vid, vid.videoWidth, vid.videoHeight, meX, top, pw, ph);
+    tag('You · ' + U.profile.name, meX + 14, top + ph - 22);
+    if (duet) { const g = x.createLinearGradient(0, top, 0, top + ph); g.addColorStop(0, '#4a1f17'); g.addColorStop(.3, '#5d2a1d'); g.addColorStop(.3, '#2c2927'); g.addColorStop(.72, '#3b3632'); g.addColorStop(1, '#221f1d');
+      x.fillStyle = g; x.fillRect(artX, top, pw, ph);
+      const im = atl[live ? 'attack' : 'idle'], cyc = live ? 120000 / S.bpm : 1100, fr = Math.floor((performance.now() % cyc) / cyc * 8), sz = 620;
+      if (im.complete && im.naturalWidth) { x.save(); x.beginPath(); x.rect(artX, top, pw, ph); x.clip(); x.imageSmoothingEnabled = false; x.globalAlpha = live ? 1 : .72; x.drawImage(im, fr * 128, 0, 128, 128, artX + (pw - sz) / 2, top + ph - sz + 150, sz, sz); x.restore(); x.imageSmoothingEnabled = true; }
+      tag('Artist · ' + CHARMAP[c.coach].name, artX + 14, top + ph - 22); tag(live ? '🎸 Playing the lick' : '👂 Your bars', artX + 14, top + 44);
+      x.font = '16px Lato, sans-serif'; x.textAlign = 'right'; x.fillStyle = 'rgba(255,255,255,.7)'; x.fillText('MOCKUP · artist video', artX + pw - 12, top + ph - 16);
+      x.fillStyle = '#000'; x.fillRect(pw - 2, top, 4, ph); }
+    x.textAlign = 'left'; x.fillStyle = '#fff'; x.font = 'bold 28px Lato, sans-serif'; x.fillText('🎸 Jam on Litejam', 28, top + ph + 86);
+    x.textAlign = 'right'; x.fillStyle = 'rgba(255,255,255,.6)'; x.font = '24px Lato, sans-serif'; x.fillText('#Litejam', W - 28, top + ph + 86);
+    rec.raf = requestAnimationFrame(draw); };
+  draw();
+}
 function jamArm(t0) {                           // called when playback is scheduled: start the recorder / the take exactly at the downbeat
   const d = Math.max(0, (t0 - AU.ctx.currentTime) * 1000), j = S.jam; if (!j) return;
-  if (j.state === 'rec' && REC) REC.timer = setTimeout(() => { REC.started = performance.now(); if (REC.mr) { try { REC.mr.start(); } catch (e) {} } }, d);
+  if (j.state === 'rec' && REC) REC.timer = setTimeout(() => { REC.started = performance.now(); [REC.mr, REC.smr].forEach(m => { if (m) { try { m.start(); } catch (e) {} } }); }, d);
   else if (j.state === 'play' && j.audio) j.timer = setTimeout(() => { j.audio.play().catch(() => {}); }, d);
 }
 function jamFinish(j) {
   if (j.state === 'play') { clearTimeout(j.timer); if (j.audio) j.audio.pause(); updDuet(); updLicks(); return; }
   const r = REC, tid = D.id; REC = null; updDuet(); if (!r) return; clearTimeout(r.timer); const dur = r.started ? (performance.now() - r.started) / 1000 : 0;
-  const type = (r.mr && r.mr.mimeType) || (j.video ? 'video/webm' : 'audio/webm');
-  const done = (url) => { if (r.stream) r.stream.getTracks().forEach(t => t.stop());
-    if (dur < 1) { updLicks(); return toast('Take discarded — it was shorter than a second.'); }
-    const list = TAKES[tid] = TAKES[tid] || [], tk = { id:'tk' + Date.now(), name:'Take ' + (list.filter(x => x.lick === j.lick).length + 1), url, dur, sim:!url, lick:j.lick, jmode:j.mode, video:!!(j.video && url), duet:!!j.duet, ext:/mp4/.test(type) ? 'mp4' : 'webm', mode:S.mode, bpm:S.bpm, tr:S.tr }; list.unshift(tk); updLicks();
-    toast('Saved “' + tk.name + '” · ' + fmt(dur) + '. No score — this one is just for you.'); };
-  if (r.mr && r.mr.state !== 'inactive') { r.mr.onstop = () => done(URL.createObjectURL(new Blob(r.chunks, { type }))); r.mr.stop(); } else done(null);
+  const type = (r.mr && r.mr.mimeType) || (j.video ? 'video/webm' : 'audio/webm'), stype = (r.smr && r.smr.mimeType) || type;
+  const stopRec = (mr, chunks, t) => new Promise(res => { if (!mr || mr.state === 'inactive') return res(null); mr.onstop = () => res(chunks.length ? URL.createObjectURL(new Blob(chunks, { type:t })) : null); try { mr.stop(); } catch (e) { res(null); } });
+  Promise.all([stopRec(r.mr, r.chunks, type), stopRec(r.smr, r.schunks, stype)]).then(([url, surl]) => {
+    cancelAnimationFrame(r.raf); try { if (r.sdest) AU.master.disconnect(r.sdest); if (r.micSrc) r.micSrc.disconnect(); if (r.vtrack) r.vtrack.stop(); } catch (e) {}
+    if (r.stream) r.stream.getTracks().forEach(t => t.stop());
+    if (dur < 1) { [url, surl].forEach(u => { if (u) URL.revokeObjectURL(u); }); updLicks(); return toast('Take discarded — it was shorter than a second.'); }
+    const list = TAKES[tid] = TAKES[tid] || [], vid = !!(j.video && url);
+    const tk = { id:'tk' + Date.now(), name:'Take ' + (list.filter(x => x.lick === j.lick).length + 1), url, dur, sim:!url, lick:j.lick, jmode:j.mode, video:vid, duet:!!j.duet, ext:/mp4/.test(type) ? 'mp4' : 'webm',
+      share: surl ? { url:surl, type:stype, ext:/mp4/.test(stype) ? (vid ? 'mp4' : 'm4a') : 'webm' } : null, mode:S.mode, bpm:S.bpm, tr:S.tr };
+    list.unshift(tk); updLicks(); toast('Saved “' + tk.name + '” · ' + fmt(dur) + '. Tap ↗ to share it.'); });
+}
+function shareFile(tk) {                         // the composed share mix when the take has one, else the raw recording
+  const f = tk.share || { url:tk.url, type:tk.video ? 'video/' + tk.ext : 'audio/' + tk.ext, ext:tk.ext || 'webm' };
+  return { url:f.url, type:f.type, ext:f.ext, name:(D.id + '_' + lkName(tk.lick) + '_' + tk.name).replace(/\s+/g, '') + '.' + f.ext };
 }
 function lickCardPro(i, act) {                  // Pro view, same folded card as Normal: closed = one "Jam" button; open = mode, one red record button, two small options, takes
   const l = lk(i), all = i === D.licks.length, open = S.loopKind === 'lick' && S.lick === i, rec = !!(S.jam && S.jam.state === 'rec' && S.jam.lick === i), cur = S.jam && S.jam.state === 'play' ? S.jam.take : null, takes = (TAKES[D.id] || []).filter(t => t.lick === i);
@@ -699,7 +753,7 @@ function lickCardPro(i, act) {                  // Pro view, same folded card as
       <div class="popt"><div class="seg"><button class="${S.lickOnce ? '' : 'on'}" data-act="passMode" data-v="loop">${icon('loop_icon', 12)} Loop ×${ROUNDS_MAX}</button><button class="${S.lickOnce ? 'on' : ''}" data-act="passMode" data-v="once">1× Once</button></div>
         <div class="seg"><button class="${S.recVideo ? '' : 'on'}" data-act="recType" data-v="audio">🎙 Audio</button><button class="${S.recVideo ? 'on' : ''}" data-act="recType" data-v="video">🎥 Video</button></div></div>
       ${S.mode !== 'audio' ? '' : takes.map(tk => `<div class="take"><button class="ib ${cur === tk.id ? 'on' : ''}" data-act="${cur === tk.id ? 'play' : 'takePlay'}" data-v="${tk.id}">${cur === tk.id ? '■' : '▶'}</button><div class="ri"><div class="tt">${esc(tk.name)}</div><div class="mm">${tk.video ? '🎥' : '🎙'} ${fmt(tk.dur)} · ${tk.jmode === 'call' ? 'Call & response' : 'My turn'}${tk.duet ? ' · duet' : ''}${tk.sim ? ' · silent demo take' : ''} · kept until you reload</div></div>
-        ${tk.url ? `<a class="ib" href="${tk.url}" download="${D.id}_${lkName(i).replace(/\s+/g, '')}_${esc(tk.name).replace(/\s+/g, '')}.${tk.ext || 'webm'}" aria-label="Save file">⬇</a>` : ''}<button class="ib" data-act="takeRename" data-v="${tk.id}" aria-label="Rename">✎</button><button class="ib" data-act="takeDel" data-v="${tk.id}" aria-label="Delete">✕</button></div>`).join('')}`}</div>`;
+        ${tk.url ? `<button class="ib shr" data-act="takeShare" data-v="${tk.id}" aria-label="Share">↗</button>` : ''}<button class="ib" data-act="takeRename" data-v="${tk.id}" aria-label="Rename">✎</button><button class="ib" data-act="takeDel" data-v="${tk.id}" aria-label="Delete">✕</button></div>`).join('')}`}</div>`;
 }
 
 /* ================= BLE: mirror the on-screen fretboard on a real Litejam guitar (Web Bluetooth) =================
@@ -831,6 +885,15 @@ function sheetSocial() {
       <div style="display:flex;flex-direction:column;gap:6px">${rows.slice(3, 10).map(lbRow).join('')}${me && me.rank > 10 ? '<div class="lbgap">⋯</div>' + lbRow(me) : ''}</div>
       ${me ? '' : `<div class="lbr me">${artHTML({ t:'avatar' }, 34)}<div class="ri"><div class="tt">${esc(U.profile.name)} <em>you</em></div><div class="mm">No score yet. Take a 🏆 Scored run on any lick to enter.</div></div></div>`}
       <p>Demo data. Real scores need note detection on the guitar and a Litejam account. One leaderboard per speed preset (Slow, Medium, Full) in the original key, so everyone on a board plays the same challenge. Custom tempo or key is practice only.</p>`; }
+  else if (S.sheet === 'share') { const tk = (TAKES[D.id] || []).find(t => t.id === c.id), sh = tk && shareFile(tk);
+    h = !tk ? '' : `<h3>Share your jam <button data-act="closeSheet">✕</button></h3>
+      ${tk.video ? `<video class="shprev" src="${sh.url}" controls playsinline></video>` : `<audio class="shprev" src="${sh.url}" controls></audio>`}
+      <div class="hint" style="margin-top:0">${!tk.share ? 'Only your own microphone' + (tk.video ? ' and camera' : '') + ' — this take has no share mix.' : (tk.video ? (tk.duet ? 'Duet video: the artist and you side by side, with the backing track and your guitar.' : 'Your video with the backing track and your guitar.') : 'Audio: the backing track and your guitar mixed together.')}</div>
+      <div class="field"><label for="shCap">Caption</label><div class="inp"><input id="shCap" maxlength="150" value="${esc(c.cap)}" autocomplete="off"></div></div>
+      <button class="cta" data-act="shareGo">↗ Share to an app…</button>
+      <div style="display:flex;gap:8px"><a class="cta alt" style="flex:1" href="${sh.url}" download="${esc(sh.name)}">⬇ Save file</a><button class="cta alt" style="flex:1" data-act="shareCopy">Copy caption</button></div>
+      <div><div class="flbl">Or save the file, then post it on</div><div class="chips">${[['TikTok', 'https://www.tiktok.com/upload'], ['Instagram', 'https://www.instagram.com/'], ['Facebook', 'https://www.facebook.com/'], ['YouTube', 'https://www.youtube.com/upload']].map(a => `<a class="chip" href="${a[1]}" target="_blank" rel="noopener">${a[0]} ↗</a>`).join('')}</div></div>
+      <p>“Share to an app” opens your phone's share menu (TikTok, Instagram, LINE, Facebook and others). ${tk.video ? '' : 'TikTok, Instagram and YouTube only accept video, so an audio take suits chat apps best; record with 🎥 Video for those. '}${sh.ext === 'webm' ? 'This browser saves WebM, which some apps reject; Safari and recent Chrome save MP4. ' : ''}Record with headphones so the microphone does not pick up the backing track twice.</p>`; }
   else if (S.sheet === 'takeName') h = `<h3>Rename take <button data-act="closeSheet">✕</button></h3><div class="field"><label for="tkName">Take name</label><div class="inp"><input id="tkName" maxlength="30" value="${esc(c.name)}" autocomplete="off"></div><div class="hint">Only you can see and hear your takes.</div></div><button class="cta" data-act="takeSave">Save</button>`;
   else if (S.sheet === 'result') { const stars = c.score >= c.max * .85 ? 3 : (c.score >= c.max * .7 ? 2 : 1);
     h = `<h3>${lkName(c.lick)} · scored run · ${SPLBL[c.sp || 'full']} <button data-act="closeSheet">✕</button></h3>
@@ -873,7 +936,16 @@ function initSocial() {
       updHeader(); updFretboard(true); updTimeline(); updTransport(); updLicks(); updDuet(); if (tk.video) scrollToId('nowbar'); play({ noCount:true }); if (!tk.url) toast('Silent demo take — only the band plays.'); },
     takeRename: (d) => { const tk = (TAKES[D.id] || []).find(x => x.id === d.v); if (!tk) return; S.ctx = { id:tk.id, name:tk.name }; openSheet('takeName'); },
     takeSave: () => { const tk = (TAKES[D.id] || []).find(x => x.id === S.ctx.id); if (tk) tk.name = (S.ctx.name || '').trim() || tk.name; closeSheet(); updLicks(); },
-    takeDel: (d) => { const l = TAKES[D.id] || [], tk = l.find(x => x.id === d.v); if (!tk) return; if (S.jam && S.jam.take === tk.id) stop(); if (tk.url) URL.revokeObjectURL(tk.url); TAKES[D.id] = l.filter(x => x !== tk); updLicks(); toast('Take deleted.'); },
+    takeShare: (d) => { const tk = (TAKES[D.id] || []).find(x => x.id === d.v); if (!tk || !tk.url) return; if (AU.playing) stop();
+      S.ctx = { id:tk.id, cap:'Jamming ' + D.title + ' · ' + lkName(tk.lick) + ' on Litejam 🎸 #Litejam #GuitarJam' }; openSheet('share'); },
+    shareGo: async () => { const tk = (TAKES[D.id] || []).find(x => x.id === (S.ctx || {}).id); if (!tk) return; const sh = shareFile(tk), cap = ($('shCap') || {}).value || '';
+      try { const blob = await (await fetch(sh.url)).blob(), file = new File([blob], sh.name, { type:(sh.type || blob.type || '').split(';')[0] });
+        if (navigator.canShare && navigator.canShare({ files:[file] })) { await navigator.share({ files:[file], title:'Litejam jam', text:cap }); toast('Sent to the app you picked.'); }
+        else toast('This browser has no share menu for files. Save the file, then post it from the app you want.');
+      } catch (e) { if (!e || e.name !== 'AbortError') toast('Sharing did not start. Save the file, then post it from the app you want.'); } },
+    shareCopy: () => { const cap = ($('shCap') || {}).value || ''; const ok = () => toast('Caption copied.'), no = () => { const i = $('shCap'); if (i) { i.focus(); i.select(); } toast('Select the caption and copy it.'); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cap).then(ok).catch(no); else no(); },
+    takeDel: (d) => { const l = TAKES[D.id] || [], tk = l.find(x => x.id === d.v); if (!tk) return; if (S.jam && S.jam.take === tk.id) stop(); if (tk.url) URL.revokeObjectURL(tk.url); if (tk.share) URL.revokeObjectURL(tk.share.url); TAKES[D.id] = l.filter(x => x !== tk); updLicks(); toast('Take deleted.'); },
   });
 }
 
@@ -1310,7 +1382,7 @@ function openSheet(kind) { S.sheet = kind; renderSheet(); $('sheetbg').classList
 function closeSheet() { S.sheet = null; S.abA = null; $('sheetbg').classList.remove('show'); }
 function renderSheet() {
   const el = $('sheet'); let h = '';
-  if (['filter', 'addTo', 'plName', 'upload', 'chord', 'avatar', 'board', 'result', 'takeName', 'ble'].includes(S.sheet)) { el.innerHTML = S.sheet === 'ble' ? sheetBle() : (sheetLib() || sheetSocial()); return; }
+  if (['filter', 'addTo', 'plName', 'upload', 'chord', 'avatar', 'board', 'result', 'takeName', 'share', 'ble'].includes(S.sheet)) { el.innerHTML = S.sheet === 'ble' ? sheetBle() : (sheetLib() || sheetSocial()); return; }
   if (S.sheet === 'scale') {
     const bar = Math.floor(getTick() / TPB), box = boxRange();
     h = `<h3>Scale on fretboard <button data-act="closeSheet">✕</button></h3><p>${D.own ? 'Suggested from the AI-detected key. If the key sounds wrong, correct it below.' : 'Suggested for this track by the producer metadata (<b>scale_focus</b>: ' + esc(DATA.tracks.find(t => t.id === D.id).scale) + ').'} The same notes light up on the guitar LEDs.</p>` +
@@ -1444,6 +1516,7 @@ const ACT = {
   viewToggle: () => setView(!S.pro),
   simpleSpeed: (d) => setSpeed(d.v),
   mixToggle: () => { S.mixOpen = !S.mixOpen; updMixer(); },
+  duetSwap: () => { S.artRight = !S.artRight; const el = $('duet'); if (el) el.classList.toggle('swap', !!S.artRight); },   // CSS order only, so the video element keeps playing
   lickOpen: (d) => { const i = +d.v, l = lk(i); if (AU.playing) stop(); S.challenge = null; S.lick = i; S.lickMode = viewMode(S.lickMode); S.fb = 'lick'; S.loopKind = 'lick'; S.loop = { a:l.startTick, b:l.endTick }; AU.pausedTick = l.startTick;   // open a lick card without starting playback (to reach its takes)
     updFretboard(true); updTimeline(); updTransport(); updLicks(); frame(true); },
   recType: (d) => { S.recVideo = d.v === 'video'; updLicks(); toast(S.recVideo ? 'Jam & Record will use your camera and microphone.' : 'Jam & Record will use your microphone only.'); },
@@ -1497,8 +1570,8 @@ const FEATURES = [
 ];
 FEATURES.push(['F13', 'โปรไฟล์ + Scored run + Leaderboard ต่อแทร็ก', 'ผู้ใช้มีโปรไฟล์ (ชื่อที่แสดง + Avatar เป็นตัวละคร Litejam Universe หรือรูป/GIF ของตัวเอง) แต่ละ lick มีปุ่ม Scored run: นับเข้าครึ่งบาร์ เล่น 1 รอบโดยไม่มีเสียงไกด์ แล้วขึ้นผลคะแนน (คะแนน, ดาว, % โน้ตที่โดน, ความแม่นจังหวะ, อันดับที่เปลี่ยน) คะแนนของแทร็ก = คะแนนดีที่สุดของแต่ละ lick รวมกัน Leaderboard ของแต่ละ backing track มีแท็บ This week / All time / Friends โพเดียม 3 อันดับแรกพร้อม Avatar และแถวของผู้ใช้ปักไว้เสมอ หน้ารายการเพลงแสดงคะแนนดีที่สุดของผู้ใช้ด้วย Scored run และ Leaderboard อยู่ใน Normal view เท่านั้น ส่วน Pro เป็นการฝึกอิสระที่ไม่มีคะแนน คะแนนแยกเป็น 3 หมวดตาม preset ความเร็ว คือ Slow, Medium และ Full (คีย์เดิม) แต่ละหมวดมีคะแนนดีที่สุดและ Leaderboard ของตัวเอง ข้อมูลผู้ใช้จึงตกอยู่ใน 3 กลุ่มที่เทียบกันได้ ส่วน Custom (ปรับ BPM หรือคีย์เอง) เป็นการฝึกเท่านั้น ไม่เก็บคะแนน',
   ['04_GUIDE_LICKS + 05_TABS (โน้ตเฉลยของ lick)', 'บัญชีผู้ใช้'], [['ดีไซน์เผื่ออนาคต', 'new', 'คะแนนและรายชื่อใน prototype เป็นข้อมูลจำลอง ของจริงต้องมี (1) การตรวจจับโน้ตจากกีตาร์ (2) ระบบบัญชีและ backend เก็บคะแนน กติกาที่วางไว้: นับเฉพาะ Audio mode ที่ tempo เดิม เพื่อให้ทุกคนเล่นโจทย์เดียวกัน และเพลงที่อัปโหลดเองไม่มี leaderboard']]]);
-FEATURES.push(['F14', 'All licks + Jam & Record ในทุก lick (Pro view · Audio mode)', 'การ์ด All licks รวมทุก lick ของแทร็กเป็นโซโลเดียว ฝึกได้เหมือน lick เดี่ยว ใน Pro view ทุกการ์ด (Lick 1–3 และ All licks) มีปุ่มแดง ● Jam & Record ปุ่มเดียว ผู้ใช้เลือกแบบก่อนด้วยปุ่ม Call & response หรือ My turn ของการ์ดนั้น ปุ่มแดงจะเปลี่ยนจากแดงโปร่งเป็นแดงทึบพร้อมบรรทัดบอกว่าจะอัดแบบไหน แล้วกดเพื่ออัดในแบบที่เลือก (ถ้ายังไม่เลือกแบบ ปุ่มจะแจ้งให้เลือกก่อน) แบบการอัดมี 2 แบบ: Call & response = เล่น lick ต้นฉบับ 1 รอบ ตามด้วย backing track ช่วงบาร์เดียวกันให้ผู้ใช้ตอบ สลับกันไป, My turn = backing track อย่างเดียว ทั้งสองแบบนับเข้า 1 บาร์ครั้งเดียวตอนเริ่ม แล้วเล่นต่อกันโดยไม่มี count-in คั่น ตัวเลือก Loop / Once ใช้กับการอัดด้วย: Once อัด 1 รอบแล้วบันทึกเอง, Loop อัดได้สูงสุด 5 รอบหรือจนกว่าจะกดหยุด เลือกชนิดการอัดได้บนการ์ดที่เปิดอยู่: 🎙 Audio หรือ 🎥 Video (เสียงพร้อมวิดีโอ) แบบวิดีโอใช้กล้องหน้า ระหว่างอัดเวทีจะเปลี่ยนเป็นจอแบบ duet ของ TikTok คือภาพผู้ใช้อยู่ซ้าย และถ้าแทร็กนั้นมีคลิปศิลปินสำหรับ Call & response ศิลปินจะอยู่ขวาและเล่นท่อน lick ต้นฉบับ (mockup: เปิดไว้เฉพาะ LJ002 Classic Rock in Em ครึ่งขวาเป็นเฟรมวิดีโอจำลองของศิลปิน ใช้ตัวละครโค้ชถ่ายครึ่งตัวในห้อง มีป้าย MOCKUP ป้ายสถานะว่ากำลังเล่น lick หรือกำลังฟัง และแถบความคืบหน้าของท่อน) ถ้าไม่มีคลิปศิลปินหรือเป็น My turn จะเห็นภาพผู้ใช้เต็มจอ Take วิดีโอเปิดดูย้อนหลังพร้อมวงได้ และทุก take มีปุ่ม ⬇ บันทึกไฟล์ Take เก็บไว้ใต้ lick ที่อัด เปิดฟังพร้อมวงแบบเดียวกับตอนอัดได้ เปลี่ยนชื่อหรือลบได้ ไม่มีคะแนน Pro ล็อกที่ Audio mode ความเร็วเต็ม จึงอัดทับ stem จริงเสมอ การ์ด Jam & Record แบบเดิมที่อัดทับไฟล์ Licks_Demo ทั้งเพลงถูกตัดออกแล้ว',
-  ['01_AUDIO › stems', '04_GUIDE_LICKS › Licks_All_Perf.wav'], [['LJ001 + LJ002', 'ok', 'อัดได้ทุก lick และ All licks ใน Audio mode'], ['prototype', 'new', 'Take เก็บไว้จนกว่าจะรีเฟรชหน้า · ต้องอนุญาตไมโครโฟน (และกล้องสำหรับวิดีโอ) ถ้าไม่มีกล้องจะอัดเสียงอย่างเดียว ถ้าไม่มีไมค์จะบันทึกเป็น take เงียบ · ไฟล์ที่กด ⬇ มีเฉพาะภาพและเสียงของผู้ใช้ ยังไม่ได้รวมเสียงวงหรือภาพศิลปินเป็นคลิปเดียว · ไฟล์ Licks_Demo.wav ไม่ได้ใช้แล้วแต่ยังฝังอยู่ใน media'], ['producer', 'wait', 'ยังไม่มีวิดีโอศิลปินจริงสำหรับ duet ต้องขอเพิ่มเป็น asset ต่อ lick']]]);
+FEATURES.push(['F14', 'All licks + Jam & Record ในทุก lick (Pro view · Audio mode)', 'การ์ด All licks รวมทุก lick ของแทร็กเป็นโซโลเดียว ฝึกได้เหมือน lick เดี่ยว ใน Pro view ทุกการ์ด (Lick 1–3 และ All licks) มีปุ่มแดง ● Jam & Record ปุ่มเดียว ผู้ใช้เลือกแบบก่อนด้วยปุ่ม Call & response หรือ My turn ของการ์ดนั้น ปุ่มแดงจะเปลี่ยนจากแดงโปร่งเป็นแดงทึบพร้อมบรรทัดบอกว่าจะอัดแบบไหน แล้วกดเพื่ออัดในแบบที่เลือก (ถ้ายังไม่เลือกแบบ ปุ่มจะแจ้งให้เลือกก่อน) แบบการอัดมี 2 แบบ: Call & response = เล่น lick ต้นฉบับ 1 รอบ ตามด้วย backing track ช่วงบาร์เดียวกันให้ผู้ใช้ตอบ สลับกันไป, My turn = backing track อย่างเดียว ทั้งสองแบบนับเข้า 1 บาร์ครั้งเดียวตอนเริ่ม แล้วเล่นต่อกันโดยไม่มี count-in คั่น ตัวเลือก Loop / Once ใช้กับการอัดด้วย: Once อัด 1 รอบแล้วบันทึกเอง, Loop อัดได้สูงสุด 5 รอบหรือจนกว่าจะกดหยุด เลือกชนิดการอัดได้บนการ์ดที่เปิดอยู่: 🎙 Audio หรือ 🎥 Video (เสียงพร้อมวิดีโอ) แบบวิดีโอใช้กล้องหน้า ระหว่างอัดเวทีจะเปลี่ยนเป็นจอแบบ duet ของ TikTok ถ้าแทร็กนั้นมีคลิปศิลปินสำหรับ Call & response ศิลปินจะอยู่ซ้ายเป็นค่าเริ่มต้นและเล่นท่อน lick ต้นฉบับ ภาพผู้ใช้อยู่ขวา (กด ⇄ บนจอเพื่อสลับข้างได้) (mockup: เปิดไว้เฉพาะ LJ002 Classic Rock in Em ครึ่งขวาเป็นเฟรมวิดีโอจำลองของศิลปิน ใช้ตัวละครโค้ชถ่ายครึ่งตัวในห้อง มีป้าย MOCKUP ป้ายสถานะว่ากำลังเล่น lick หรือกำลังฟัง และแถบความคืบหน้าของท่อน) ถ้าไม่มีคลิปศิลปินหรือเป็น My turn จะเห็นภาพผู้ใช้เต็มจอ Take วิดีโอเปิดดูย้อนหลังพร้อมวงได้ ทุก take มีปุ่ม ↗ Share เปิดหน้าแชร์: ไฟล์ที่แชร์เป็นไฟล์ที่รวมแล้ว คือเสียง backing track ผสมกับเสียงกีตาร์ของผู้ใช้ และถ้าเป็นวิดีโอจะเป็นเฟรมแนวตั้ง 9:16 ที่มีแถบชื่อเพลง ครึ่งศิลปินกับครึ่งผู้ใช้เรียงข้างเดียวกับบนจอ และแถบ Litejam ด้านล่าง หน้าแชร์มีตัวอย่างให้ดู ช่อง caption ปุ่ม Share to an app (เปิดเมนูแชร์ของเครื่องไปยัง TikTok, Instagram, LINE, Facebook ฯลฯ) ปุ่ม Save file ปุ่ม Copy caption และลิงก์ไปหน้าอัปโหลดของแต่ละแพลตฟอร์ม Take เก็บไว้ใต้ lick ที่อัด เปิดฟังพร้อมวงแบบเดียวกับตอนอัดได้ เปลี่ยนชื่อหรือลบได้ ไม่มีคะแนน Pro ล็อกที่ Audio mode ความเร็วเต็ม จึงอัดทับ stem จริงเสมอ การ์ด Jam & Record แบบเดิมที่อัดทับไฟล์ Licks_Demo ทั้งเพลงถูกตัดออกแล้ว',
+  ['01_AUDIO › stems', '04_GUIDE_LICKS › Licks_All_Perf.wav'], [['LJ001 + LJ002', 'ok', 'อัดได้ทุก lick และ All licks ใน Audio mode'], ['prototype', 'new', 'Take เก็บไว้จนกว่าจะรีเฟรชหน้า · ต้องอนุญาตไมโครโฟน (และกล้องสำหรับวิดีโอ) ถ้าไม่มีกล้องจะอัดเสียงอย่างเดียว ถ้าไม่มีไมค์จะบันทึกเป็น take เงียบ · การแชร์ตรงเข้าแอปใช้เมนูแชร์ของเครื่อง (Web Share) จึงทำงานบนมือถือเป็นหลัก บนคอมพิวเตอร์ให้บันทึกไฟล์แล้วอัปโหลดเอง · เบราว์เซอร์บางตัวบันทึกเป็น WebM ซึ่งบางแอปไม่รับ · take เสียงอย่างเดียวแชร์เข้า TikTok / Instagram / YouTube ไม่ได้เพราะรับเฉพาะวิดีโอ · ควรใส่หูฟังตอนอัดเพื่อไม่ให้ไมค์เก็บเสียงวงซ้ำ · ไฟล์ Licks_Demo.wav ไม่ได้ใช้แล้วแต่ยังฝังอยู่ใน media'], ['producer', 'wait', 'ยังไม่มีวิดีโอศิลปินจริงสำหรับ duet ต้องขอเพิ่มเป็น asset ต่อ lick']]]);
 FEATURES.push(['F15', 'เชื่อมกีตาร์จริงผ่าน BLE — ไฟ LED ตามหน้าจอ', 'ปุ่ม Connect ที่แถบบนสุดเชื่อมกีตาร์ Litejam ผ่าน Web Bluetooth เมื่อเชื่อมแล้วไฟบนเฟรตบอร์ดจริงจะตามหน้าจอทุกโหมด: สเกล (root แดง, โน้ตสเกลน้ำเงิน, Target notes ขาว), Chord tones, และ Lick ที่ไฟเขียวคือโน้ตที่ต้องเล่นตอนนี้ ไฟเหลืองคือโน้ตถัดไป รวมถึงแท็บ Scale เดิม มีหน้าสถานะแสดงชื่อกีตาร์ แบตเตอรี่ จำนวนเฟรมที่ส่ง ปุ่มทดสอบไฟ และปุ่มปิดไฟ',
   ['โปรโตคอลเดียวกับแอป: service 00EE › characteristic EE04'], [['ต้องทดสอบกับกีตาร์จริง', 'new', 'เขียนตามรูปแบบเฟรมของแอป Litejam และทดสอบกับอุปกรณ์จำลองแล้ว แต่ยังไม่ได้ลองกับกีตาร์จริง · ใช้ได้ใน Chrome หรือ Edge บนคอมพิวเตอร์และ Android ผ่าน https หรือ localhost · iPhone และ iPad เชื่อมไม่ได้ · ต้องปิดแอป Litejam บนมือถือก่อน']]]);
 FEATURES.push(['F16', 'เวที + วงเป็นตัวละคร Litejam Universe', 'ส่วนบนของ player เป็นเวที สีฉากตาม Style ของแทร็ก โค้ชประจำ Style ยืนซ้าย ตัวละครของผู้ใช้ยืนขวา (ใช้ตัวละครจากโปรไฟล์ แตะเพื่อเปลี่ยน) คอร์ด NOW / NEXT และจุดจังหวะยังอยู่แถวเดิมเหนือเวที ตัวใหญ่ชัดเหมือนก่อน ตอนเล่นแสงไฟส่องคนที่กำลังเล่นและตัวละครดีดตามจังหวะ 2 บีตต่อรอบ แตะโค้ชเพื่อขอคำแนะนำ เช่น โน้ตเป้าหมายของคอร์ดตอนนั้น ส่วน Mixer กลับมาเป็นแถบ M / S / volume ต่อ stem เหมือนเวอร์ชันธรรมดา (เลิกใช้ “The band” ที่เป็นตัวละคร) และพับเก็บไว้ใต้หัวข้อ Mixer แตะหัวข้อเพื่อกางออก',
